@@ -2,7 +2,7 @@ package rules
 
 import "fmt"
 
-func Lenght(fieldName string, item interface{}, lenght int) Rule {
+func Lenght(fieldName string, item any, lenght int) Rule {
 	switch typ := item.(type) {
 	case string:
 		return LengthString(fieldName, typ, lenght)

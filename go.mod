@@ -1,3 +1,3 @@
 module github.com/mishudark/rules
 
-go 1.15
+go 1.24.1
