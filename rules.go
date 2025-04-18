@@ -24,18 +24,36 @@ type Evaluable interface {
 	Evaluate() (bool, []Rule)
 }
 
-// PredicateNode is the leaf node that contains the set of rules to be executed if Predicate is met
-type PredicateNode struct {
-	Predicate Predicate
-	Rules     []Rule
+// LeafNode is the leaf node that contains the set of rules to be executed
+type LeafNode struct {
+	Rules []Rule
 }
 
-func (n *PredicateNode) Evaluate() (bool, []Rule) {
+func (n *LeafNode) Evaluate() (bool, []Rule) {
+	return true, n.Rules
+}
+
+// ConditionNode is a node with a condition that must be valid
+type ConditionNode struct {
+	Predicate  Predicate
+	Evaluables []Evaluable
+}
+
+func (n *ConditionNode) Evaluate() (bool, []Rule) {
 	if n.Predicate == nil || !n.Predicate() {
 		return false, nil
 	}
 
-	return true, n.Rules
+	matchRules := []Rule{}
+
+	for _, evaluable := range n.Evaluables {
+		ok, rules := evaluable.Evaluate()
+		if ok {
+			matchRules = append(matchRules, rules...)
+		}
+	}
+
+	return true, matchRules
 }
 
 type AndNode struct {
@@ -92,35 +110,24 @@ func (n *OrNode) Evaluate() (bool, []Rule) {
 	return true, acc
 }
 
-type NotNode struct {
-	Child Evaluable
+func And(children ...Evaluable) Evaluable {
+	return &AndNode{Children: children}
 }
 
-func (n *NotNode) Evaluate() (bool, []Rule) {
-	if n.Child == nil {
-		return true, []Rule{}
+func Rules(rules ...Rule) Evaluable {
+	return &LeafNode{Rules: rules}
+}
+
+func Node(condition Predicate, children ...Evaluable) Evaluable {
+	return &ConditionNode{
+		Predicate:  condition,
+		Evaluables: children,
 	}
-
-	ok, rules := n.Child.Evaluate()
-	return !ok, rules
-}
-
-func And(Children ...Evaluable) Evaluable {
-	return &AndNode{Children: Children}
-}
-
-func P(cond Predicate, rules ...Rule) Evaluable {
-	return &PredicateNode{Predicate: cond, Rules: rules}
 }
 
 // Or creates an OrNode.
 func Or(Children ...Evaluable) Evaluable {
 	return &OrNode{Children: Children}
-}
-
-// Not creates a NotNode.
-func Not(child Evaluable) Evaluable {
-	return &NotNode{Child: child}
 }
 
 // NopRule is useful for test or when operation doesn't need to performa rule
