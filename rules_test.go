@@ -25,7 +25,7 @@ func TestValidate(t *testing.T) {
 	length := len(rules)
 
 	for _, rule := range rules {
-		rule()
+		rule.Validate()
 	}
 
 	if length != 2 {
@@ -33,43 +33,47 @@ func TestValidate(t *testing.T) {
 	}
 }
 
-func rule1(t *testing.T) func() *Error {
-	return func() *Error {
-
-		t.Log("rule1")
-		return nil
+func rule1(t *testing.T) Rule {
+	return &SimpleRule{
+		Rule: func() *Error {
+			t.Log("rule1")
+			return nil
+		},
 	}
 }
 
-func rule2(t *testing.T) func() *Error {
-	return func() *Error {
+func rule2(t *testing.T) Rule {
+	return &SimpleRule{
+		Rule: func() *Error {
 
-		t.Log("rule2")
-		return nil
+			t.Log("rule2")
+			return nil
+		},
 	}
 }
 
-func rule3(t *testing.T) func() *Error {
-	return func() *Error {
-
-		t.Log("rule1")
-		return nil
+func rule3(t *testing.T) Rule {
+	return &SimpleRule{
+		Rule: func() *Error {
+			t.Log("rule1")
+			return nil
+		},
 	}
 }
 
-func ageGt30(age int) Predicate {
+func ageGt30(age int) Condition {
 	return func() bool {
 		return age > 30
 	}
 }
 
-func ageGt1(age int) Predicate {
+func ageGt1(age int) Condition {
 	return func() bool {
 		return age > 1
 	}
 }
 
-func ageLte30(age int) Predicate {
+func ageLte30(age int) Condition {
 	return func() bool {
 		return age <= 30
 	}

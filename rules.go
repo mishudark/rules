@@ -13,11 +13,14 @@ func (e Error) Error() string {
 	return fmt.Sprintf("code: %s, field: %s, error: %s", e.Code, e.Field, e.Err)
 }
 
-// Predicate is used with When statement to determine if the next rule should be executed
-type Predicate func() bool
+// Condition is used with When statement to determine if the next rule should be executed
+type Condition func() bool
 
 // Rule represents a validation that can returns either an error or a nil value
-type Rule func() *Error
+type Rule interface {
+	Prepare() *Error
+	Validate() *Error
+}
 
 // Evaluate contains the predicate and rules to execute if predicate is true
 type Evaluable interface {
@@ -35,12 +38,12 @@ func (n *LeafNode) Evaluate() (bool, []Rule) {
 
 // ConditionNode is a node with a condition that must be valid
 type ConditionNode struct {
-	Predicate  Predicate
+	Condition  Condition
 	Evaluables []Evaluable
 }
 
 func (n *ConditionNode) Evaluate() (bool, []Rule) {
-	if n.Predicate == nil || !n.Predicate() {
+	if n.Condition == nil || !n.Condition() {
 		return false, nil
 	}
 
@@ -118,9 +121,9 @@ func Rules(rules ...Rule) Evaluable {
 	return &LeafNode{Rules: rules}
 }
 
-func Node(condition Predicate, children ...Evaluable) Evaluable {
+func Node(condition Condition, children ...Evaluable) Evaluable {
 	return &ConditionNode{
-		Predicate:  condition,
+		Condition:  condition,
 		Evaluables: children,
 	}
 }
@@ -130,33 +133,54 @@ func Or(Children ...Evaluable) Evaluable {
 	return &OrNode{Children: Children}
 }
 
+// Root creates an OrNode.
+func Root(Children ...Evaluable) Evaluable {
+	return &OrNode{Children: Children}
+}
+
+func Not(condition Condition) bool {
+	return !condition()
+}
+
 // NopRule is useful for test or when operation doesn't need to performa rule
 func NopRule() *Error {
 	return nil
 }
 
 // Chain of rules that executes one rule after other until it finds an error
-func Chain(rules ...Rule) Rule {
-	return func() *Error {
-		for _, rule := range rules {
-			err := rule()
-			if err != nil {
-				return err
-			}
-		}
-
-		return nil
-	}
-}
+// func Chain(rules ...Rule) Rule {
+// 	return func() *Error {
+// 		for _, rule := range rules {
+// 			err := rule()
+// 			if err != nil {
+// 				return err
+// 			}
+// 		}
+//
+// 		return nil
+// 	}
+// }
 
 // Validate executes the provided rules in order and returns a set of errors
 func Validate(rules ...Rule) (errors []error) {
 	for _, rule := range rules {
-		err := rule()
+		err := rule.Validate()
 		if err != nil {
 			errors = append(errors, err)
 		}
 	}
 
 	return errors
+}
+
+type SimpleRule struct {
+	Rule func() *Error
+}
+
+func (r *SimpleRule) Prepare() *Error {
+	return nil
+}
+
+func (r *SimpleRule) Validate() *Error {
+	return r.Rule()
 }
