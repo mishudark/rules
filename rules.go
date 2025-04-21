@@ -173,6 +173,7 @@ var _ Evaluable = (*AndNode)(nil) // Ensure AndNode implements the Evaluable int
 // At least one of its child Evaluables must evaluate successfully for the OrNode
 // itself to be considered successful.
 type OrNode struct {
+	name     string      // Name of the OrNode (optional) for identification or debugging.
 	Children []Evaluable // The children, where at least one must evaluate successfully.
 }
 
@@ -191,9 +192,14 @@ func (n *OrNode) Evaluate(executionPath string) (bool, []Rule) {
 
 	var anyOk bool
 
+	nodeName := n.name
+	if nodeName == "" {
+		nodeName = "orNode"
+	}
+
 	for i := 0; i < len(n.Children); i++ {
 		child := n.Children[i]
-		ok, rules := child.Evaluate(fmt.Sprintf("%s -> %s", executionPath, "orNode"))
+		ok, rules := child.Evaluate(fmt.Sprintf("%s -> %s", executionPath, nodeName))
 		if ok {
 			anyOk = true
 			acc = append(acc, rules...) // Collect rules from all successful children.
@@ -246,7 +252,7 @@ func Or(Children ...Evaluable) Evaluable {
 // depending on the desired overall validation logic.
 func Root(Children ...Evaluable) Evaluable {
 	// Note: Currently identical to Or().
-	return &OrNode{Children: Children}
+	return &OrNode{Children: Children, name: "root"}
 }
 
 // Not is a helper function that takes a Condition and returns a Conditiona with

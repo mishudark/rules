@@ -34,8 +34,8 @@ func TestValidateTree(t *testing.T) {
 			),
 			expect: 2,
 			executionPaths: []string{
-				"root -> orNode -> ageGt30 -> leafNode",
-				"root -> orNode -> orNode -> ageGt1 -> leafNode",
+				"tree -> root -> ageGt30 -> leafNode",
+				"tree -> root -> orNode -> ageGt1 -> leafNode",
 			},
 		},
 
@@ -60,7 +60,7 @@ func TestValidateTree(t *testing.T) {
 				),
 			),
 			expect:         1,
-			executionPaths: []string{"root -> orNode -> orNode -> nameEqBob -> leafNode"},
+			executionPaths: []string{"tree -> root -> orNode -> nameEqBob -> leafNode"},
 		},
 	}
 
@@ -68,7 +68,7 @@ func TestValidateTree(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, rules := tc.tree.Evaluate("root")
+			_, rules := tc.tree.Evaluate("tree")
 			length := len(rules)
 
 			if length != tc.expect {
