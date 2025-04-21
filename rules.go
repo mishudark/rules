@@ -91,7 +91,7 @@ func (n *LeafNode) Evaluate(executionPath string) (bool, []Rule) {
 
 	for _, rule := range n.Rules {
 		// Set the execution path for each rule.
-		rule.SetExecutionPath(fmt.Sprintf("%s.%s", executionPath, "leafNode"))
+		rule.SetExecutionPath(fmt.Sprintf("%s -> %s", executionPath, "leafNode"))
 	}
 
 	return true, n.Rules
@@ -120,7 +120,7 @@ func (n *ConditionNode) Evaluate(executionPath string) (bool, []Rule) {
 	matchRules := []Rule{}
 
 	for _, evaluable := range n.Evaluables {
-		ok, rules := evaluable.Evaluate(fmt.Sprintf("%s.%s", executionPath, n.Condition.GetName()))
+		ok, rules := evaluable.Evaluate(fmt.Sprintf("%s -> %s", executionPath, n.Condition.GetName()))
 		if ok {
 			matchRules = append(matchRules, rules...)
 		}
@@ -154,7 +154,7 @@ func (n *AndNode) Evaluate(executionPath string) (bool, []Rule) {
 
 	for i := 0; i < len(n.Children); i++ {
 		child := n.Children[i]
-		ok, rules := child.Evaluate(fmt.Sprintf("%s.%s", executionPath, "andNode"))
+		ok, rules := child.Evaluate(fmt.Sprintf("%s -> %s", executionPath, "andNode"))
 		if ok {
 			acc = append(acc, rules...)
 		} else {
@@ -193,7 +193,7 @@ func (n *OrNode) Evaluate(executionPath string) (bool, []Rule) {
 
 	for i := 0; i < len(n.Children); i++ {
 		child := n.Children[i]
-		ok, rules := child.Evaluate(fmt.Sprintf("%s.%s", executionPath, "orNode"))
+		ok, rules := child.Evaluate(fmt.Sprintf("%s -> %s", executionPath, "orNode"))
 		if ok {
 			anyOk = true
 			acc = append(acc, rules...) // Collect rules from all successful children.
@@ -253,7 +253,7 @@ func Root(Children ...Evaluable) Evaluable {
 // the logical negation of the Condition's result.
 func Not(condition Condition) Condition {
 	return &SimpleCondition{
-		Name: fmt.Sprintf("Not.%s", condition.GetName()),
+		Name: fmt.Sprintf("Not -> %s", condition.GetName()),
 		Condition: func() bool {
 			return !condition.IsValid()
 		},
