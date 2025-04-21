@@ -147,19 +147,30 @@ func NopRule() *Error {
 	return nil
 }
 
-// Chain of rules that executes one rule after other until it finds an error
-// func Chain(rules ...Rule) Rule {
-// 	return func() *Error {
-// 		for _, rule := range rules {
-// 			err := rule()
-// 			if err != nil {
-// 				return err
-// 			}
-// 		}
-//
-// 		return nil
-// 	}
-// }
+type ChinRules struct {
+	Rules []Rule
+}
+
+func (c *ChinRules) Prepare() *Error {
+	for _, rule := range c.Rules {
+		if err := rule.Prepare(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (c *ChinRules) Validate() *Error {
+	for _, rule := range c.Rules {
+		err := rule.Validate()
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
 
 // Validate executes the provided rules in order and returns a set of errors
 func Validate(rules ...Rule) (errors []error) {
