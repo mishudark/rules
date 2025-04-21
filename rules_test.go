@@ -11,7 +11,7 @@ func TestValidate(t *testing.T) {
 		age: 33,
 	}
 
-	tree := Or(
+	tree := Root(
 		Node(ageGt30(user.age), Rules(rule1(t))),
 		Or(
 			Node(ageGt1(user.age),
@@ -21,11 +21,11 @@ func TestValidate(t *testing.T) {
 		),
 	)
 
-	_, rules := tree.Evaluate()
+	_, rules := tree.Evaluate("root")
 	length := len(rules)
 
 	for _, rule := range rules {
-		rule.Validate()
+		t.Logf("executionPath: %s", rule.GetExecutionPath())
 	}
 
 	if length != 2 {
@@ -62,19 +62,28 @@ func rule3(t *testing.T) Rule {
 }
 
 func ageGt30(age int) Condition {
-	return func() bool {
-		return age > 30
+	return &ConditionImpl{
+		Name: "ageGt30",
+		Condition: func() bool {
+			return age > 30
+		},
 	}
 }
 
 func ageGt1(age int) Condition {
-	return func() bool {
-		return age > 1
+	return &ConditionImpl{
+		Name: "ageGt1",
+		Condition: func() bool {
+			return age > 1
+		},
 	}
 }
 
 func ageLte30(age int) Condition {
-	return func() bool {
-		return age <= 30
+	return &ConditionImpl{
+		Name: "ageLte30",
+		Condition: func() bool {
+			return age <= 30
+		},
 	}
 }

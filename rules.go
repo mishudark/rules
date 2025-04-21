@@ -1,6 +1,8 @@
 package rules
 
-import "fmt"
+import (
+	"fmt"
+)
 
 // Error contains a structured definition for validation errors, including
 // the field related to the error, a descriptive error message, and an
@@ -20,7 +22,30 @@ func (e Error) Error() string {
 // Condition represents a function that evaluates to true or false, typically
 // used within conditional nodes (like ConditionNode) to determine whether
 // associated rules or child nodes should be processed.
-type Condition func() bool
+type Condition interface {
+	// GetName is a method to retrieve the name of the condition for debugging or logging.
+	GetName() string
+	// Evaluate returns true if the condition is met, otherwise false.
+	IsValid() bool
+}
+
+type ConditionImpl struct {
+	Name      string
+	Condition func() bool
+}
+
+func (c *ConditionImpl) GetName() string {
+	return c.Name
+}
+
+func (c *ConditionImpl) IsValid() bool {
+	if c.Condition == nil {
+		// Avoid nil pointer dereference if Condition func wasn't provided.
+		return false
+	}
+
+	return c.Condition()
+}
 
 // Rule represents a single unit of validation logic. It includes a Prepare
 // step (potentially for setup or pre-checks) and a Validate step that performs
@@ -33,6 +58,10 @@ type Rule interface {
 	// Validate performs the core validation logic.
 	// Returns an *Error if validation fails, otherwise nil.
 	Validate() *Error
+	// SetExecutionPath allows setting a path for execution context.
+	SetExecutionPath(path string)
+	// GetExecutionPath retrieves the execution path for the rule.
+	GetExecutionPath() string
 }
 
 // Evaluable represents any component (like a node or a set of rules) within the
@@ -43,7 +72,7 @@ type Evaluable interface {
 	// Evaluate checks the conditions of the component and returns whether it
 	// passes (bool) and the list of Rules associated with it if it passes.
 	// If the conditions are not met, it returns false and a nil slice of Rules.
-	Evaluate() (bool, []Rule)
+	Evaluate(executionPath string) (bool, []Rule)
 }
 
 // LeafNode represents a terminal node in the validation evaluation tree.
@@ -56,7 +85,13 @@ type LeafNode struct {
 // Evaluate implements the Evaluable interface for LeafNode. It always
 // returns true, indicating success, along with the slice of Rules contained
 // within the node.
-func (n *LeafNode) Evaluate() (bool, []Rule) {
+func (n *LeafNode) Evaluate(executionPath string) (bool, []Rule) {
+
+	for _, rule := range n.Rules {
+		// Set the execution path for each rule.
+		rule.SetExecutionPath(fmt.Sprintf("%s.%s", executionPath, "leafNode"))
+	}
+
 	return true, n.Rules
 }
 
@@ -73,15 +108,15 @@ type ConditionNode struct {
 // the Condition. If the Condition is nil or evaluates to false, Evaluate returns
 // false and nil rules. If the Condition is true, it evaluates each child Evaluable,
 // collecting and returning all Rules from children that evaluate successfully (return true).
-func (n *ConditionNode) Evaluate() (bool, []Rule) {
-	if n.Condition == nil || !n.Condition() {
+func (n *ConditionNode) Evaluate(executionPath string) (bool, []Rule) {
+	if n.Condition == nil || !n.Condition.IsValid() {
 		return false, nil
 	}
 
 	matchRules := []Rule{}
 
 	for _, evaluable := range n.Evaluables {
-		ok, rules := evaluable.Evaluate()
+		ok, rules := evaluable.Evaluate(fmt.Sprintf("%s.%s", executionPath, n.Condition.GetName()))
 		if ok {
 			matchRules = append(matchRules, rules...)
 		}
@@ -104,7 +139,7 @@ type AndNode struct {
 // returns false and nil rules. If all children evaluate to true, it returns true
 // and the combined list of Rules gathered from all children. An empty AndNode
 // is considered successful.
-func (n *AndNode) Evaluate() (bool, []Rule) {
+func (n *AndNode) Evaluate(executionPath string) (bool, []Rule) {
 	acc := []Rule{}
 
 	if len(n.Children) == 0 {
@@ -113,7 +148,7 @@ func (n *AndNode) Evaluate() (bool, []Rule) {
 
 	for i := 0; i < len(n.Children); i++ {
 		child := n.Children[i]
-		ok, rules := child.Evaluate()
+		ok, rules := child.Evaluate(fmt.Sprintf("%s.%s", executionPath, "andNode"))
 		if ok {
 			acc = append(acc, rules...)
 		} else {
@@ -138,7 +173,7 @@ type OrNode struct {
 // true along with the combined list of Rules gathered from *all* successful
 // children. If no children evaluate to true, it returns false and nil rules.
 // An empty OrNode is considered successful (or perhaps should be false, depending on desired logic - current impl returns true).
-func (n *OrNode) Evaluate() (bool, []Rule) {
+func (n *OrNode) Evaluate(executionPath string) (bool, []Rule) {
 	acc := []Rule{}
 
 	if len(n.Children) == 0 {
@@ -150,7 +185,7 @@ func (n *OrNode) Evaluate() (bool, []Rule) {
 
 	for i := 0; i < len(n.Children); i++ {
 		child := n.Children[i]
-		ok, rules := child.Evaluate()
+		ok, rules := child.Evaluate(fmt.Sprintf("%s.%s", executionPath, "orNode"))
 		if ok {
 			anyOk = true
 			acc = append(acc, rules...) // Collect rules from all successful children.
@@ -207,8 +242,11 @@ func Root(Children ...Evaluable) Evaluable {
 // Not is a helper function that takes a Condition and returns a Conditiona with
 // the logical negation of the Condition's result.
 func Not(condition Condition) Condition {
-	return func() bool {
-		return !condition()
+	return &ConditionImpl{
+		Name: fmt.Sprintf("Not.%s", condition.GetName()),
+		Condition: func() bool {
+			return !condition.IsValid()
+		},
 	}
 }
 
@@ -235,7 +273,8 @@ type ChainRules struct { // Corrected typo from ChinRules
 // Prepare() methods succeed, it returns nil.
 func (c *ChainRules) Prepare() *Error {
 	for _, rule := range c.Rules {
-		if err := rule.Prepare(); err != nil {
+		err := rule.Prepare()
+		if err != nil {
 			return err
 		}
 	}
@@ -274,6 +313,7 @@ func Validate(rules ...Rule) (errors []error) {
 // a single function. This function represents the core validation logic.
 // The Prepare method for a SimpleRule is a no-op.
 type SimpleRule struct {
+	executionPath string // executionPath is a string representing the path of execution context.
 	// Rule is the function containing the validation logic.
 	// It should return an *Error if validation fails, or nil if it passes.
 	Rule func() *Error
@@ -294,4 +334,14 @@ func (r *SimpleRule) Validate() *Error {
 		return nil // Or return fmt.Errorf("SimpleRule's Rule function is nil")?
 	}
 	return r.Rule()
+}
+
+// SetExecutionPath sets the execution path for the SimpleRule.
+func (r *SimpleRule) SetExecutionPath(path string) {
+	r.executionPath = path
+}
+
+// GetExecutionPath retrieves the execution path for the SimpleRule.
+func (r *SimpleRule) GetExecutionPath() string {
+	return r.executionPath
 }
