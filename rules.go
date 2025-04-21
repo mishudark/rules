@@ -29,16 +29,16 @@ type Condition interface {
 	IsValid() bool
 }
 
-type ConditionImpl struct {
+type SimpleCondition struct {
 	Name      string
 	Condition func() bool
 }
 
-func (c *ConditionImpl) GetName() string {
+func (c *SimpleCondition) GetName() string {
 	return c.Name
 }
 
-func (c *ConditionImpl) IsValid() bool {
+func (c *SimpleCondition) IsValid() bool {
 	if c.Condition == nil {
 		// Avoid nil pointer dereference if Condition func wasn't provided.
 		return false
@@ -46,6 +46,8 @@ func (c *ConditionImpl) IsValid() bool {
 
 	return c.Condition()
 }
+
+var _ Condition = (*SimpleCondition)(nil) // Ensure SimpleCondition implements the Condition interface.
 
 // Rule represents a single unit of validation logic. It includes a Prepare
 // step (potentially for setup or pre-checks) and a Validate step that performs
@@ -95,6 +97,8 @@ func (n *LeafNode) Evaluate(executionPath string) (bool, []Rule) {
 	return true, n.Rules
 }
 
+var _ Evaluable = (*LeafNode)(nil) // Ensure LeafNode implements the Evaluable interface.
+
 // ConditionNode represents a node in the validation evaluation tree that has an
 // associated Condition. If the Condition evaluates to true, the ConditionNode
 // then evaluates its child Evaluables, accumulating the Rules from those children
@@ -126,6 +130,8 @@ func (n *ConditionNode) Evaluate(executionPath string) (bool, []Rule) {
 	// It returns the aggregated rules from its successful children.
 	return true, matchRules
 }
+
+var _ Evaluable = (*ConditionNode)(nil) // Ensure ConditionNode implements the Evaluable interface.
 
 // AndNode represents a logical AND operation in the validation evaluation tree.
 // All of its child Evaluables must evaluate successfully for the AndNode itself
@@ -160,6 +166,8 @@ func (n *AndNode) Evaluate(executionPath string) (bool, []Rule) {
 	// All children succeeded.
 	return true, acc
 }
+
+var _ Evaluable = (*AndNode)(nil) // Ensure AndNode implements the Evaluable interface.
 
 // OrNode represents a logical OR operation in the validation evaluation tree.
 // At least one of its child Evaluables must evaluate successfully for the OrNode
@@ -200,6 +208,8 @@ func (n *OrNode) Evaluate(executionPath string) (bool, []Rule) {
 	// At least one child succeeded.
 	return true, acc
 }
+
+var _ Evaluable = (*OrNode)(nil) // Ensure OrNode implements the Evaluable interface.
 
 // And is a constructor function that creates and returns a new AndNode
 // containing the provided child Evaluables.
@@ -242,7 +252,7 @@ func Root(Children ...Evaluable) Evaluable {
 // Not is a helper function that takes a Condition and returns a Conditiona with
 // the logical negation of the Condition's result.
 func Not(condition Condition) Condition {
-	return &ConditionImpl{
+	return &SimpleCondition{
 		Name: fmt.Sprintf("Not.%s", condition.GetName()),
 		Condition: func() bool {
 			return !condition.IsValid()
@@ -318,6 +328,8 @@ type SimpleRule struct {
 	// It should return an *Error if validation fails, or nil if it passes.
 	Rule func() *Error
 }
+
+var _ Rule = (*SimpleRule)(nil) // Ensure SimpleRule implements the Rule interface.
 
 // Prepare implements the Rule interface for SimpleRule. It performs no action
 // and always returns nil.

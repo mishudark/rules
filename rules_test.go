@@ -62,7 +62,7 @@ func rule3(t *testing.T) Rule {
 }
 
 func ageGt30(age int) Condition {
-	return &ConditionImpl{
+	return &SimpleCondition{
 		Name: "ageGt30",
 		Condition: func() bool {
 			return age > 30
@@ -71,7 +71,7 @@ func ageGt30(age int) Condition {
 }
 
 func ageGt1(age int) Condition {
-	return &ConditionImpl{
+	return &SimpleCondition{
 		Name: "ageGt1",
 		Condition: func() bool {
 			return age > 1
@@ -80,7 +80,7 @@ func ageGt1(age int) Condition {
 }
 
 func ageLte30(age int) Condition {
-	return &ConditionImpl{
+	return &SimpleCondition{
 		Name: "ageLte30",
 		Condition: func() bool {
 			return age <= 30
