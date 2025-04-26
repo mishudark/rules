@@ -25,7 +25,7 @@ func (e Error) Error() string {
 // associated rules or child nodes should be processed.
 type Condition interface {
 	// Prepare is executed before the main validation logic. It can be used to retrieve information.
-	Prepare(ctx context.Context) *Error
+	Prepare(ctx context.Context) error
 	// GetName is a method to retrieve the name of the condition for debugging or logging.
 	GetName() string
 	// Evaluate returns true if the condition is met, otherwise false.
@@ -42,7 +42,7 @@ func (c *SimpleCondition) GetName() string {
 }
 
 // Prepare is a no-op for SimpleCondition. It always returns nil.
-func (c *SimpleCondition) Prepare(ctx context.Context) *Error {
+func (c *SimpleCondition) Prepare(ctx context.Context) error {
 	return nil // No preparation needed for simple conditions.
 }
 
@@ -59,17 +59,17 @@ var _ Condition = (*SimpleCondition)(nil) // Ensure SimpleCondition implements t
 
 // Rule represents a single unit of validation logic. It includes a Prepare
 // step (potentially for setup or pre-checks) and a Validate step that performs
-// the actual validation check. Both methods return an *Error if validation fails
+// the actual validation check. Both methods return an error if validation fails
 // at that stage, or nil otherwise.
 type Rule interface {
 	// Name returns the name of the rule for identification.
 	Name() string
 	// Prepare allows for initialization or pre-checks before the main validation.
-	// Returns an *Error if preparation fails, otherwise nil.
-	Prepare() *Error
+	// Returns an error if preparation fails, otherwise nil.
+	Prepare(ctx context.Context) error
 	// Validate performs the core validation logic.
-	// Returns an *Error if validation fails, otherwise nil.
-	Validate() *Error
+	// Returns an error if validation fails, otherwise nil.
+	Validate(ctx context.Context) error
 	// SetExecutionPath allows setting a path for execution context.
 	SetExecutionPath(path string)
 	// GetExecutionPath retrieves the execution path for the rule.
@@ -81,6 +81,9 @@ type Rule interface {
 // component's conditions are met (returning true) and provides the list of Rules
 // that should be executed as a result.
 type Evaluable interface {
+	// PrepareConditions is executed before the main validation logic. It can be used to retrieve information.
+	// specifically its target are the children condition nodes.
+	PrepareConditions(ctx context.Context) error
 	// Evaluate checks the conditions of the component and returns whether it
 	// passes (bool) and the list of Rules associated with it if it passes.
 	// If the conditions are not met, it returns false and a nil slice of Rules.
@@ -92,6 +95,12 @@ type Evaluable interface {
 // node is reached and evaluated successfully.
 type LeafNode struct {
 	Rules []Rule
+}
+
+// PrepareConditions is a no-op for LeafNode. It always returns nil.
+func (r *LeafNode) PrepareConditions(ctx context.Context) error {
+	// LeafNode does not have conditions to prepare.
+	return nil
 }
 
 // Evaluate implements the Evaluable interface for LeafNode. It always
@@ -116,6 +125,16 @@ var _ Evaluable = (*LeafNode)(nil) // Ensure LeafNode implements the Evaluable i
 type ConditionNode struct {
 	Condition  Condition   // The condition that must be true for children to be evaluated.
 	Evaluables []Evaluable // The child nodes or rule sets to evaluate if Condition is true.
+}
+
+// PrepareConditions prepares the ConditionNode by preparing its Condition.
+func (n *ConditionNode) PrepareConditions(ctx context.Context) error {
+	if n.Condition == nil {
+		// Avoid nil pointer dereference if Condition func wasn't provided.
+		return nil
+	}
+
+	return n.Condition.Prepare(ctx)
 }
 
 // Evaluate implements the Evaluable interface for ConditionNode. It first checks
@@ -148,6 +167,18 @@ var _ Evaluable = (*ConditionNode)(nil) // Ensure ConditionNode implements the E
 // to be considered successful.
 type AndNode struct {
 	Children []Evaluable // The children that must all evaluate successfully.
+}
+
+// PrepareConditions is a no-op for AndNode.
+func (andNode *AndNode) PrepareConditions(ctx context.Context) error {
+	for _, child := range andNode.Children {
+		err := child.PrepareConditions(ctx)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // Evaluate implements the Evaluable interface for AndNode. It iterates through
@@ -185,6 +216,18 @@ var _ Evaluable = (*AndNode)(nil) // Ensure AndNode implements the Evaluable int
 type OrNode struct {
 	name     string      // Name of the OrNode (optional) for identification or debugging.
 	Children []Evaluable // The children, where at least one must evaluate successfully.
+}
+
+// PrepareConditions is a no-op for OrNode.
+func (andNode *OrNode) PrepareConditions(ctx context.Context) error {
+	for _, child := range andNode.Children {
+		err := child.PrepareConditions(ctx)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // Evaluate implements the Evaluable interface for OrNode. It iterates through
@@ -273,7 +316,7 @@ func (n *NotCondition) GetName() string {
 	return fmt.Sprintf("Not -> %s", n.condition.GetName())
 }
 
-func (n *NotCondition) Prepare(ctx context.Context) *Error {
+func (n *NotCondition) Prepare(ctx context.Context) error {
 	return n.condition.Prepare(ctx)
 }
 
@@ -300,8 +343,8 @@ func Not(condition Condition) Condition {
 // It returns nil, signifying success without performing any action. It can be useful
 // in conditional logic where one branch requires no validation or during testing.
 // Note: This function itself does not implement the Rule interface. It returns the
-// *Error expected from Rule's Prepare or Validate methods.
-func NopRule() *Error {
+// error expected from Rule's Prepare or Validate methods.
+func NopRule() error {
 	return nil
 }
 
@@ -317,9 +360,9 @@ type ChainRules struct { // Corrected typo from ChinRules
 // Rule in the sequence. If any child Rule's Prepare() returns an error,
 // this method stops and returns that error immediately. If all children's
 // Prepare() methods succeed, it returns nil.
-func (c *ChainRules) Prepare() *Error {
+func (c *ChainRules) Prepare(ctx context.Context) error {
 	for _, rule := range c.Rules {
-		err := rule.Prepare()
+		err := rule.Prepare(ctx)
 		if err != nil {
 			return err
 		}
@@ -331,9 +374,9 @@ func (c *ChainRules) Prepare() *Error {
 // Rule in the sequence. If any child Rule's Validate() returns an error,
 // this method stops and returns that error immediately. If all children's
 // Validate() methods succeed, it returns nil.
-func (c *ChainRules) Validate() *Error {
+func (c *ChainRules) Validate(ctx context.Context) error {
 	for _, rule := range c.Rules {
-		err := rule.Validate()
+		err := rule.Validate(ctx)
 		if err != nil {
 			return err
 		}
@@ -341,36 +384,20 @@ func (c *ChainRules) Validate() *Error {
 	return nil
 }
 
-// Validate is a convenience function that executes the Validate() method for each
-// provided Rule. Unlike ChainRules, it runs *all* rules regardless of individual
-// failures and collects all non-nil errors returned into a slice.
-// Returns a slice of errors encountered, which will be empty if all rules passed.
-func Validate(rules ...Rule) (errors []error) {
-	for _, rule := range rules {
-		err := rule.Validate()
-		if err != nil {
-			errors = append(errors, err) // Note: Appends *Error which implements error
-		}
-	}
-	return errors
-}
-
 // SimpleRule provides a basic implementation of the Rule interface by wrapping
 // a single function. This function represents the core validation logic.
 // The Prepare method for a SimpleRule is a no-op.
 type SimpleRule struct {
-	executionPath string // executionPath is a string representing the path of execution context.
-	// Rule is the function containing the validation logic.
-	// It should return an *Error if validation fails, or nil if it passes.
-	name string
-	rule func() *Error
+	executionPath string
+	name          string
+	rule          func() error
 }
 
 var _ Rule = (*SimpleRule)(nil) // Ensure SimpleRule implements the Rule interface.
 
 // Prepare implements the Rule interface for SimpleRule. It performs no action
 // and always returns nil.
-func (r *SimpleRule) Prepare() *Error {
+func (r *SimpleRule) Prepare(ctx context.Context) error {
 	return nil // Simple rules typically don't require preparation.
 }
 
@@ -380,13 +407,14 @@ func (r *SimpleRule) Name() string {
 }
 
 // Validate implements the Rule interface for SimpleRule. It executes the
-// wrapped Rule function and returns its result (*Error or nil).
-func (r *SimpleRule) Validate() *Error {
+// wrapped Rule function and returns its result (error or nil).
+func (r *SimpleRule) Validate(ctx context.Context) error {
 	if r.rule == nil {
 		// Avoid nil pointer dereference if Rule func wasn't provided.
 		// Consider returning an error here or handling it based on requirements.
 		return nil // Or return fmt.Errorf("SimpleRule's Rule function is nil")?
 	}
+
 	return r.rule()
 }
 
@@ -401,7 +429,7 @@ func (r *SimpleRule) GetExecutionPath() string {
 }
 
 // NewSimpleRule is a constructor function that creates and returns a new
-func NewSimpleRule(name string, rule func() *Error) Rule {
+func NewSimpleRule(name string, rule func() error) Rule {
 	return &SimpleRule{
 		name: name,
 		rule: rule,

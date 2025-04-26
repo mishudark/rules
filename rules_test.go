@@ -95,7 +95,7 @@ func TestValidateTree(t *testing.T) {
 
 func rule1() Rule {
 	return NewSimpleRule("rule1",
-		func() *Error {
+		func() error {
 			return nil
 		},
 	)
@@ -103,7 +103,7 @@ func rule1() Rule {
 
 func rule2() Rule {
 	return NewSimpleRule("rule2",
-		func() *Error {
+		func() error {
 			return nil
 		},
 	)
@@ -111,7 +111,7 @@ func rule2() Rule {
 
 func rule3() Rule {
 	return NewSimpleRule("rule3",
-		func() *Error {
+		func() error {
 			return nil
 		},
 	)
