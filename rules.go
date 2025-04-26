@@ -286,7 +286,7 @@ func (n *NotCondition) IsValid(ctx context.Context) bool {
 	return !n.condition.IsValid(ctx)
 }
 
-var _ Condition = (*NotCondition)(nil)
+var _ Condition = (*NotCondition)(nil) // Ensure NotCondition implements the Condition interface.
 
 // Not is a helper function that takes a Condition and returns a Conditiona with
 // the logical negation of the Condition's result.
