@@ -1,6 +1,7 @@
 package rules
 
 import (
+	"context"
 	"testing"
 )
 
@@ -64,11 +65,13 @@ func TestValidateTree(t *testing.T) {
 		},
 	}
 
+	ctx := context.Background()
+
 	for _, tc := range tt {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, rules := tc.tree.Evaluate("tree")
+			_, rules := tc.tree.Evaluate(ctx, "tree")
 			length := len(rules)
 
 			if length != tc.expect {

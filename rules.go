@@ -1,6 +1,7 @@
 package rules
 
 import (
+	"context"
 	"fmt"
 )
 
@@ -23,10 +24,12 @@ func (e Error) Error() string {
 // used within conditional nodes (like ConditionNode) to determine whether
 // associated rules or child nodes should be processed.
 type Condition interface {
+	// Prepare is executed before the main validation logic. It can be used to retrieve information.
+	Prepare(ctx context.Context) *Error
 	// GetName is a method to retrieve the name of the condition for debugging or logging.
 	GetName() string
 	// Evaluate returns true if the condition is met, otherwise false.
-	IsValid() bool
+	IsValid(ctx context.Context) bool
 }
 
 type SimpleCondition struct {
@@ -38,7 +41,12 @@ func (c *SimpleCondition) GetName() string {
 	return c.Name
 }
 
-func (c *SimpleCondition) IsValid() bool {
+// Prepare is a no-op for SimpleCondition. It always returns nil.
+func (c *SimpleCondition) Prepare(ctx context.Context) *Error {
+	return nil // No preparation needed for simple conditions.
+}
+
+func (c *SimpleCondition) IsValid(ctx context.Context) bool {
 	if c.Condition == nil {
 		// Avoid nil pointer dereference if Condition func wasn't provided.
 		return false
@@ -76,7 +84,7 @@ type Evaluable interface {
 	// Evaluate checks the conditions of the component and returns whether it
 	// passes (bool) and the list of Rules associated with it if it passes.
 	// If the conditions are not met, it returns false and a nil slice of Rules.
-	Evaluate(executionPath string) (bool, []Rule)
+	Evaluate(ctx context.Context, executionPath string) (bool, []Rule)
 }
 
 // LeafNode represents a terminal node in the validation evaluation tree.
@@ -89,7 +97,7 @@ type LeafNode struct {
 // Evaluate implements the Evaluable interface for LeafNode. It always
 // returns true, indicating success, along with the slice of Rules contained
 // within the node.
-func (n *LeafNode) Evaluate(executionPath string) (bool, []Rule) {
+func (n *LeafNode) Evaluate(ctx context.Context, executionPath string) (bool, []Rule) {
 
 	for _, rule := range n.Rules {
 		// Set the execution path for each rule.
@@ -114,15 +122,15 @@ type ConditionNode struct {
 // the Condition. If the Condition is nil or evaluates to false, Evaluate returns
 // false and nil rules. If the Condition is true, it evaluates each child Evaluable,
 // collecting and returning all Rules from children that evaluate successfully (return true).
-func (n *ConditionNode) Evaluate(executionPath string) (bool, []Rule) {
-	if n.Condition == nil || !n.Condition.IsValid() {
+func (n *ConditionNode) Evaluate(ctx context.Context, executionPath string) (bool, []Rule) {
+	if n.Condition == nil || !n.Condition.IsValid(ctx) {
 		return false, nil
 	}
 
 	matchRules := []Rule{}
 
 	for _, evaluable := range n.Evaluables {
-		ok, rules := evaluable.Evaluate(fmt.Sprintf("%s -> %s", executionPath, n.Condition.GetName()))
+		ok, rules := evaluable.Evaluate(ctx, fmt.Sprintf("%s -> %s", executionPath, n.Condition.GetName()))
 		if ok {
 			matchRules = append(matchRules, rules...)
 		}
@@ -147,7 +155,7 @@ type AndNode struct {
 // returns false and nil rules. If all children evaluate to true, it returns true
 // and the combined list of Rules gathered from all children. An empty AndNode
 // is considered successful.
-func (n *AndNode) Evaluate(executionPath string) (bool, []Rule) {
+func (n *AndNode) Evaluate(ctx context.Context, executionPath string) (bool, []Rule) {
 	acc := []Rule{}
 
 	if len(n.Children) == 0 {
@@ -156,7 +164,7 @@ func (n *AndNode) Evaluate(executionPath string) (bool, []Rule) {
 
 	for i := 0; i < len(n.Children); i++ {
 		child := n.Children[i]
-		ok, rules := child.Evaluate(fmt.Sprintf("%s -> %s", executionPath, "andNode"))
+		ok, rules := child.Evaluate(ctx, fmt.Sprintf("%s -> %s", executionPath, "andNode"))
 		if ok {
 			acc = append(acc, rules...)
 		} else {
@@ -184,7 +192,7 @@ type OrNode struct {
 // true along with the combined list of Rules gathered from *all* successful
 // children. If no children evaluate to true, it returns false and nil rules.
 // An empty OrNode is considered successful (or perhaps should be false, depending on desired logic - current impl returns true).
-func (n *OrNode) Evaluate(executionPath string) (bool, []Rule) {
+func (n *OrNode) Evaluate(ctx context.Context, executionPath string) (bool, []Rule) {
 	acc := []Rule{}
 
 	if len(n.Children) == 0 {
@@ -201,7 +209,7 @@ func (n *OrNode) Evaluate(executionPath string) (bool, []Rule) {
 
 	for i := 0; i < len(n.Children); i++ {
 		child := n.Children[i]
-		ok, rules := child.Evaluate(fmt.Sprintf("%s -> %s", executionPath, nodeName))
+		ok, rules := child.Evaluate(ctx, fmt.Sprintf("%s -> %s", executionPath, nodeName))
 		if ok {
 			anyOk = true
 			acc = append(acc, rules...) // Collect rules from all successful children.
@@ -257,14 +265,34 @@ func Root(Children ...Evaluable) Evaluable {
 	return &OrNode{Children: Children, name: "root"}
 }
 
+type NotCondition struct {
+	condition Condition
+}
+
+func (n *NotCondition) GetName() string {
+	return fmt.Sprintf("Not -> %s", n.condition.GetName())
+}
+
+func (n *NotCondition) Prepare(ctx context.Context) *Error {
+	return n.condition.Prepare(ctx)
+}
+
+func (n *NotCondition) IsValid(ctx context.Context) bool {
+	if n.condition == nil {
+		// Avoid nil pointer dereference if Condition func wasn't provided.
+		return false
+	}
+
+	return !n.condition.IsValid(ctx)
+}
+
+var _ Condition = (*NotCondition)(nil)
+
 // Not is a helper function that takes a Condition and returns a Conditiona with
 // the logical negation of the Condition's result.
 func Not(condition Condition) Condition {
-	return &SimpleCondition{
-		Name: fmt.Sprintf("Not -> %s", condition.GetName()),
-		Condition: func() bool {
-			return !condition.IsValid()
-		},
+	return &NotCondition{
+		condition: condition,
 	}
 }
 
