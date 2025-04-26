@@ -24,18 +24,18 @@ func TestValidateTree(t *testing.T) {
 		{
 			name: "test with Or and And nodes",
 			tree: Root(
-				Node(ageGt30(user.age), Rules(rule1(t))),
+				Node(ageGt30(user.age), Rules(rule1())),
 				Or(
 					Node(ageGt1(user.age),
-						Rules(rule2(t))),
+						Rules(rule2())),
 					Node(ageLte30(user.age),
-						Rules(rule3(t))),
+						Rules(rule3())),
 				),
 			),
 			expect: 2,
 			executionPaths: []string{
-				"tree -> root -> ageGt30 -> leafNode",
-				"tree -> root -> orNode -> ageGt1 -> leafNode",
+				"tree -> root -> ageGt30 -> leafNode -> rule1",
+				"tree -> root -> orNode -> ageGt1 -> leafNode -> rule2",
 			},
 		},
 
@@ -43,8 +43,8 @@ func TestValidateTree(t *testing.T) {
 			name: "testWithAnd",
 			tree: Root(
 				And(
-					Node(ageLte30(user.age), Rules(rule1(t))),
-					Node(nameEqBob(user.name), Rules(rule2(t))),
+					Node(ageLte30(user.age), Rules(rule1())),
+					Node(nameEqBob(user.name), Rules(rule2())),
 				),
 			),
 			expect:         0,
@@ -55,12 +55,12 @@ func TestValidateTree(t *testing.T) {
 			name: "test with Or node",
 			tree: Root(
 				Or(
-					Node(ageLte30(user.age), Rules(rule1(t))),
-					Node(nameEqBob(user.name), Rules(rule2(t))),
+					Node(ageLte30(user.age), Rules(rule1())),
+					Node(nameEqBob(user.name), Rules(rule2())),
 				),
 			),
 			expect:         1,
-			executionPaths: []string{"tree -> root -> orNode -> nameEqBob -> leafNode"},
+			executionPaths: []string{"tree -> root -> orNode -> nameEqBob -> leafNode -> rule2"},
 		},
 	}
 
@@ -72,50 +72,46 @@ func TestValidateTree(t *testing.T) {
 			length := len(rules)
 
 			if length != tc.expect {
-				t.Errorf("expected %d  rule, got: %d", tc.expect, length)
+				t.Errorf("expected: %d  rule, got: %d", tc.expect, length)
 			}
 
 			if len(rules) != len(tc.executionPaths) {
-				t.Errorf("expected %d execution paths, got: %d", len(tc.executionPaths), len(rules))
+				t.Errorf("expected: %d \ngot: %d", len(tc.executionPaths), len(rules))
 
 				return
 			}
 
 			for i, rule := range rules {
 				if rule.GetExecutionPath() != tc.executionPaths[i] {
-					t.Errorf("index: %d, expected %s, got: %s", i, tc.executionPaths[i], rule.GetExecutionPath())
+					t.Errorf("index: %d\nexpected: %s\ngot: %s", i, tc.executionPaths[i], rule.GetExecutionPath())
 				}
 			}
 		})
 	}
 }
 
-func rule1(t *testing.T) Rule {
-	return &SimpleRule{
-		Rule: func() *Error {
-			t.Log("rule1")
+func rule1() Rule {
+	return NewSimpleRule("rule1",
+		func() *Error {
 			return nil
 		},
-	}
+	)
 }
 
-func rule2(t *testing.T) Rule {
-	return &SimpleRule{
-		Rule: func() *Error {
-
-			t.Log("rule2")
+func rule2() Rule {
+	return NewSimpleRule("rule2",
+		func() *Error {
 			return nil
 		},
-	}
+	)
 }
 
-func rule3(t *testing.T) Rule {
-	return &SimpleRule{
-		Rule: func() *Error {
-			t.Log("rule1")
+func rule3() Rule {
+	return NewSimpleRule("rule3",
+		func() *Error {
 			return nil
 		},
-	}
+	)
 }
 
 func ageGt30(age int) Condition {

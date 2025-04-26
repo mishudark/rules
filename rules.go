@@ -54,6 +54,8 @@ var _ Condition = (*SimpleCondition)(nil) // Ensure SimpleCondition implements t
 // the actual validation check. Both methods return an *Error if validation fails
 // at that stage, or nil otherwise.
 type Rule interface {
+	// Name returns the name of the rule for identification.
+	Name() string
 	// Prepare allows for initialization or pre-checks before the main validation.
 	// Returns an *Error if preparation fails, otherwise nil.
 	Prepare() *Error
@@ -91,7 +93,7 @@ func (n *LeafNode) Evaluate(executionPath string) (bool, []Rule) {
 
 	for _, rule := range n.Rules {
 		// Set the execution path for each rule.
-		rule.SetExecutionPath(fmt.Sprintf("%s -> %s", executionPath, "leafNode"))
+		rule.SetExecutionPath(fmt.Sprintf("%s -> %s -> %s", executionPath, "leafNode", rule.Name()))
 	}
 
 	return true, n.Rules
@@ -332,7 +334,8 @@ type SimpleRule struct {
 	executionPath string // executionPath is a string representing the path of execution context.
 	// Rule is the function containing the validation logic.
 	// It should return an *Error if validation fails, or nil if it passes.
-	Rule func() *Error
+	name string
+	rule func() *Error
 }
 
 var _ Rule = (*SimpleRule)(nil) // Ensure SimpleRule implements the Rule interface.
@@ -343,15 +346,20 @@ func (r *SimpleRule) Prepare() *Error {
 	return nil // Simple rules typically don't require preparation.
 }
 
+// Name returns the name of the SimpleRule. This is useful for debugging.
+func (r *SimpleRule) Name() string {
+	return r.name
+}
+
 // Validate implements the Rule interface for SimpleRule. It executes the
 // wrapped Rule function and returns its result (*Error or nil).
 func (r *SimpleRule) Validate() *Error {
-	if r.Rule == nil {
+	if r.rule == nil {
 		// Avoid nil pointer dereference if Rule func wasn't provided.
 		// Consider returning an error here or handling it based on requirements.
 		return nil // Or return fmt.Errorf("SimpleRule's Rule function is nil")?
 	}
-	return r.Rule()
+	return r.rule()
 }
 
 // SetExecutionPath sets the execution path for the SimpleRule.
@@ -362,4 +370,12 @@ func (r *SimpleRule) SetExecutionPath(path string) {
 // GetExecutionPath retrieves the execution path for the SimpleRule.
 func (r *SimpleRule) GetExecutionPath() string {
 	return r.executionPath
+}
+
+// NewSimpleRule is a constructor function that creates and returns a new
+func NewSimpleRule(name string, rule func() *Error) Rule {
+	return &SimpleRule{
+		name: name,
+		rule: rule,
+	}
 }
