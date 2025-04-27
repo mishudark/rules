@@ -384,54 +384,89 @@ func (c *ChainRules) Validate(ctx context.Context) error {
 	return nil
 }
 
-// SimpleRule provides a basic implementation of the Rule interface by wrapping
+// RuleBase provides a basic implementation of the Rule execution path.
+type RuleBase struct {
+	executionPath string
+}
+
+// SetExecutionPath sets the execution path for the RuleBase.
+func (r *RuleBase) SetExecutionPath(path string) {
+	r.executionPath = path
+}
+
+// GetExecutionPath retrieves the execution path for the RuleBase.
+func (r *RuleBase) GetExecutionPath() string {
+	return r.executionPath
+}
+
+// RulePure provides a basic implementation of the Rule interface by wrapping
 // a single function. This function represents the core validation logic.
-// The Prepare method for a SimpleRule is a no-op.
-type SimpleRule struct {
+// The Prepare method for a RulePure is a no-op.
+type RulePure struct {
+	RuleBase
 	executionPath string
 	name          string
 	rule          func() error
 }
 
-var _ Rule = (*SimpleRule)(nil) // Ensure SimpleRule implements the Rule interface.
+var _ Rule = (*RulePure)(nil) // Ensure RulePure implements the Rule interface.
 
-// Prepare implements the Rule interface for SimpleRule. It performs no action
+// Prepare implements the Rule interface for RulePure. It performs no action
 // and always returns nil.
-func (r *SimpleRule) Prepare(ctx context.Context) error {
+func (r *RulePure) Prepare(ctx context.Context) error {
 	return nil // Simple rules typically don't require preparation.
 }
 
-// Name returns the name of the SimpleRule. This is useful for debugging.
-func (r *SimpleRule) Name() string {
+// Name returns the name of the RulePure. This is useful for debugging.
+func (r *RulePure) Name() string {
 	return r.name
 }
 
-// Validate implements the Rule interface for SimpleRule. It executes the
+// Validate implements the Rule interface for RulePure. It executes the
 // wrapped Rule function and returns its result (error or nil).
-func (r *SimpleRule) Validate(ctx context.Context) error {
+func (r *RulePure) Validate(ctx context.Context) error {
 	if r.rule == nil {
 		// Avoid nil pointer dereference if Rule func wasn't provided.
 		// Consider returning an error here or handling it based on requirements.
-		return nil // Or return fmt.Errorf("SimpleRule's Rule function is nil")?
+		return nil // Or return fmt.Errorf("RulePure's Rule function is nil")?
 	}
 
 	return r.rule()
 }
 
-// SetExecutionPath sets the execution path for the SimpleRule.
-func (r *SimpleRule) SetExecutionPath(path string) {
-	r.executionPath = path
-}
-
-// GetExecutionPath retrieves the execution path for the SimpleRule.
-func (r *SimpleRule) GetExecutionPath() string {
-	return r.executionPath
-}
-
-// NewSimpleRule is a constructor function that creates and returns a new
-func NewSimpleRule(name string, rule func() error) Rule {
-	return &SimpleRule{
+// NewRulePure is a constructor function that creates and returns a new
+func NewRulePure(name string, rule func() error) Rule {
+	return &RulePure{
 		name: name,
 		rule: rule,
+	}
+}
+
+// ConditionPure does not need to be prepared and is used as a placeholder
+type ConditionPure struct {
+	name      string
+	condition func() bool
+}
+
+var _ Condition = (*ConditionPure)(nil) // Ensure ConditionPure implements the Condition interface.
+
+// Prepare is a no-op for ConditionPure, it always returns nil.
+func (c *ConditionPure) Prepare(context.Context) error {
+	return nil
+}
+
+func (c *ConditionPure) GetName() string {
+	return c.name
+}
+
+func (c *ConditionPure) IsValid(ctx context.Context) bool {
+	return c.condition()
+}
+
+// NewConditionPure  function that creates and returns a new ConditionPure.
+func NewConditionPure(name string, condition func() bool) Condition {
+	return &ConditionPure{
+		name:      name,
+		condition: condition,
 	}
 }

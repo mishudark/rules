@@ -3,7 +3,7 @@ package rules
 import "fmt"
 
 func LengthString(fieldName, value string, length int) Rule {
-	return NewSimpleRule("lengthString",
+	return NewRulePure("lengthString",
 		func() error {
 			if len([]rune(value)) == length {
 				return nil
@@ -18,7 +18,7 @@ func LengthString(fieldName, value string, length int) Rule {
 }
 
 func LengthSlice(fieldName string, value []any, length int) Rule {
-	return NewSimpleRule("lengthSlice",
+	return NewRulePure("lengthSlice",
 		func() error {
 			if len(value) == length {
 				return nil
