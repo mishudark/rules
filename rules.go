@@ -32,31 +32,6 @@ type Condition interface {
 	IsValid(ctx context.Context) bool
 }
 
-type SimpleCondition struct {
-	Name      string
-	Condition func() bool
-}
-
-func (c *SimpleCondition) GetName() string {
-	return c.Name
-}
-
-// Prepare is a no-op for SimpleCondition. It always returns nil.
-func (c *SimpleCondition) Prepare(ctx context.Context) error {
-	return nil // No preparation needed for simple conditions.
-}
-
-func (c *SimpleCondition) IsValid(ctx context.Context) bool {
-	if c.Condition == nil {
-		// Avoid nil pointer dereference if Condition func wasn't provided.
-		return false
-	}
-
-	return c.Condition()
-}
-
-var _ Condition = (*SimpleCondition)(nil) // Ensure SimpleCondition implements the Condition interface.
-
 // Rule represents a single unit of validation logic. It includes a Prepare
 // step (potentially for setup or pre-checks) and a Validate step that performs
 // the actual validation check. Both methods return an error if validation fails

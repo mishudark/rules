@@ -118,37 +118,37 @@ func rule3() Rule {
 }
 
 func ageGt30(age int) Condition {
-	return &SimpleCondition{
-		Name: "ageGt30",
-		Condition: func() bool {
+	return NewConditionPure(
+		"ageGt30",
+		func() bool {
 			return age > 30
 		},
-	}
+	)
 }
 
 func ageGt1(age int) Condition {
-	return &SimpleCondition{
-		Name: "ageGt1",
-		Condition: func() bool {
+	return NewConditionPure(
+		"ageGt1",
+		func() bool {
 			return age > 1
 		},
-	}
+	)
 }
 
 func ageLte30(age int) Condition {
-	return &SimpleCondition{
-		Name: "ageLte30",
-		Condition: func() bool {
+	return NewConditionPure(
+		"ageLte30",
+		func() bool {
 			return age <= 30
 		},
-	}
+	)
 }
 
 func nameEqBob(name string) Condition {
-	return &SimpleCondition{
-		Name: "nameEqBob",
-		Condition: func() bool {
+	return NewConditionPure(
+		"nameEqBob",
+		func() bool {
 			return name == "Bob"
 		},
-	}
+	)
 }
