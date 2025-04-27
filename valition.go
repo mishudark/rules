@@ -2,6 +2,7 @@ package rules
 
 import (
 	"context"
+	"errors"
 )
 
 // Hook is called after each step of the validation process.
@@ -34,13 +35,13 @@ func NewTarget(ctx context.Context, tree Evaluable) *Target {
 // 2. Evaluate the tree and get candidate rules
 // 3. Prepare the rule for evaluation
 // 4. Validate the prepared rules
-func ValidateMulti(ctx context.Context, targets []Target, hooks ProcessingHooks, name string) []error {
+func ValidateMulti(ctx context.Context, targets []Target, hooks ProcessingHooks, name string) error {
 	for _, target := range targets {
 		// Prepare the conditions for evaluation
 		err := target.tree.PrepareConditions(target.ctx)
 		if err != nil {
 			// If trere is an error, return immediately
-			return []error{err}
+			return errors.Join(err)
 		}
 	}
 
@@ -97,7 +98,7 @@ func ValidateMulti(ctx context.Context, targets []Target, hooks ProcessingHooks,
 		hooks.AfterPrepareRules(ctx)
 	}
 
-	return errs
+	return errors.Join(errs...)
 }
 
 // Validate executes the Evaluable tree in 4 steps:
@@ -105,12 +106,12 @@ func ValidateMulti(ctx context.Context, targets []Target, hooks ProcessingHooks,
 // 2. Evaluate the tree and get candidate rules
 // 3. Prepare the rule for evaluation
 // 4. Validate the prepared rules
-func Validate(ctx context.Context, tree Evaluable, hooks ProcessingHooks, name string) []error {
+func Validate(ctx context.Context, tree Evaluable, hooks ProcessingHooks, name string) error {
 
 	// Prepare the conditions for evaluation
 	err := tree.PrepareConditions(ctx)
 	if err != nil {
-		return []error{err}
+		return errors.Join(err)
 	}
 
 	if hooks.AfterPrepareConditions != nil {
@@ -157,5 +158,5 @@ func Validate(ctx context.Context, tree Evaluable, hooks ProcessingHooks, name s
 		hooks.AfterValidateRules(ctx)
 	}
 
-	return errs
+	return errors.Join(errs...)
 }
