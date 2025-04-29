@@ -168,7 +168,7 @@ func (n *AllOfNode) Evaluate(ctx context.Context, executionPath string) (bool, [
 		return true, acc // An empty AND condition is trivially true.
 	}
 
-	for i := 0; i < len(n.Children); i++ {
+	for i := range n.Children {
 		child := n.Children[i]
 		ok, rules := child.Evaluate(ctx, fmt.Sprintf("%s -> %s", executionPath, "allOfNode"))
 		if ok {
@@ -225,7 +225,7 @@ func (n *AnyOfNode) Evaluate(ctx context.Context, executionPath string) (bool, [
 		nodeName = "anyOfNode"
 	}
 
-	for i := 0; i < len(n.Children); i++ {
+	for i := range n.Children {
 		child := n.Children[i]
 		ok, rules := child.Evaluate(ctx, fmt.Sprintf("%s -> %s", executionPath, nodeName))
 		if ok {
