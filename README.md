@@ -125,13 +125,28 @@ func main() {
 		),
 	)
 
+    hooks := ProcessingHooks {
+        AfterPrepareConditions: func(ctx context.Context) {
+            log.Println("After preparing conditions")
+        },
+        AfterEvaluateConditions: func(ctx context.Context) {
+            log.Println("After evaluating conditions")
+        },
+        AfterPrepareRules: func(ctx context.Context) {
+            log.Println("After preparing rules")
+        },
+        AfterValidateRules: func(ctx context.Context) {
+            log.Println("After validating rules")
+        },
+    }
+
 	// Validate the tree
 	ctx := context.Background()
-	errors := rules.Validate(ctx, tree, rules.ProcessingHooks{}, "userValidationTree")
+	err := rules.Validate(ctx, tree, hooks, "userValidationTree")
 
 	// Check for validation errors
-	if len(errors) > 0 {
-		fmt.Printf("Validation errors: %v\n", errors)
+	if err != nil {
+		fmt.Printf("Validation errors: %v\n", err)
 	} else {
 		fmt.Println("Validation completed successfully!")
 	}

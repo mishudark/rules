@@ -144,7 +144,7 @@ type AllOfNode struct {
 	Children []Evaluable // The children that must all evaluate successfully.
 }
 
-// PrepareConditions is a no-op for AllOfNode.
+// PrepareConditions for AllOfNode.
 func (n *AllOfNode) PrepareConditions(ctx context.Context) error {
 	for _, child := range n.Children {
 		err := child.PrepareConditions(ctx)
@@ -193,7 +193,7 @@ type AnyOfNode struct {
 	Children []Evaluable // The children, where at least one must evaluate successfully.
 }
 
-// PrepareConditions is a no-op for AnyOfNode.
+// PrepareConditions for AnyOfNode.
 func (n *AnyOfNode) PrepareConditions(ctx context.Context) error {
 	for _, child := range n.Children {
 		err := child.PrepareConditions(ctx)
