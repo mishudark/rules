@@ -15,66 +15,6 @@ and rules, organized with logical operators like AND/OR.
 
 ---
 
-## 📖 How It Works
-
-### Key Components
-
-1. **`Condition`**  
-   A boolean check that determines if a branch of the tree should be followed.  
-   **Example:** Check if a user is older than 30.  
-
-2. **`Rule`**  
-   Represents a unit of logic or action to execute if its conditions are met.  
-   **Example:** Print a message if the user is valid.
-
-3. **`Evaluable`**  
-   The building block of the rule tree, which can be evaluated.  
-   Combines conditions and rules into logical structures.
-
-4. **`Hooks`**
-   Are customizable points in the validation process that allow custom logic to execute at key stages. Hooks include:
-
-   - **`AfterPrepareConditions`**: Executes after preparing conditions for evaluation.
-   - **`AfterEvaluateConditions`**: Executes after evaluating conditions and determining candidate rules.
-   - **`AfterPrepareRules`**: Executes after preparing rules for evaluation.
-   - **`AfterValidateRules`**: Executes after validating the prepared rules.
-## 🔗 Logical Nodes
-
-- **`Root`**: The starting point of your tree.
-- **`Node`**: A single condition with child nodes or rules.
-- **`And`**: All child nodes must evaluate to true.
-- **`Or`**: At least one child node must evaluate to true.
-- **`Rules`**: Contains the actions or validations to execute.
-
-
-### The engine operates as a tree structure where:
-
-1. **Leaf Nodes (Rules):**  
-   These are the endpoints of the tree, containing the actual rules or actions to be executed.
-   A rule can perform a specific validation or action when its conditions are satisfied.  
-   **Example:** A rule might check if a user’s age is valid or log a message if a condition is met.
-
-2. **Non-Leaf Nodes (Logic Operators and Conditions):**
-   - **Conditions:** These are boolean checks that decide whether a particular branch of the tree should be followed.  
-     **Example:** Check if a user is older than 30.
-   - **Logic Operators (AND/OR):** These combine multiple conditions or nodes to form complex logical structures.
-     - **AND Node:** All child nodes must evaluate to `true` for this node to succeed.
-     - **OR Node:** At least one child node must evaluate to `true` for this node to succeed.
-
-
-### Tree Structure Overview
-
-The tree starts with a **Root Node**, which acts as the entry point for evaluation. Each branch of the tree can contain:
-- **Nodes**: Represent conditions or logical operators (AND/OR).
-- **Rules**: Contain the logic to be executed if the path through the tree is valid.
-
-**Key Behavior:**  
-If a condition in a node is not satisfied, the corresponding branch of the tree is skipped, and any rules under that branch
-will not be evaluated. This ensures that only relevant rules are executed, based on the conditions provided.
-
-
----
-
 ## 🛠️ Building a Rule Tree
 
 ### Example: User Validation
@@ -278,3 +218,64 @@ The tree processes the rules and conditions in a hierarchical manner, starting f
 - **Negation Support**: The `rules.Not` function enables handling cases where conditions should evaluate to `false`.
 
 This structure provides a clear and modular way to define and validate complex user rules.
+
+---
+
+## 📖 How It Works
+
+### Key Components
+
+1. **`Condition`**  
+   A boolean check that determines if a branch of the tree should be followed.  
+   **Example:** Check if a user is older than 30.  
+
+2. **`Rule`**  
+   Represents a unit of logic or action to execute if its conditions are met.  
+   **Example:** Print a message if the user is valid.
+
+3. **`Evaluable`**  
+   The building block of the rule tree, which can be evaluated.  
+   Combines conditions and rules into logical structures.
+
+4. **`Hooks`**
+   Are customizable points in the validation process that allow custom logic to execute at key stages. Hooks include:
+
+   - **`AfterPrepareConditions`**: Executes after preparing conditions for evaluation.
+   - **`AfterEvaluateConditions`**: Executes after evaluating conditions and determining candidate rules.
+   - **`AfterPrepareRules`**: Executes after preparing rules for evaluation.
+   - **`AfterValidateRules`**: Executes after validating the prepared rules.
+## 🔗 Logical Nodes
+
+- **`Root`**: The starting point of your tree.
+- **`Node`**: A single condition with child nodes or rules.
+- **`And`**: All child nodes must evaluate to true.
+- **`Or`**: At least one child node must evaluate to true.
+- **`Rules`**: Contains the actions or validations to execute.
+
+
+### The engine operates as a tree structure where:
+
+1. **Leaf Nodes (Rules):**  
+   These are the endpoints of the tree, containing the actual rules or actions to be executed.
+   A rule can perform a specific validation or action when its conditions are satisfied.  
+   **Example:** A rule might check if a user’s age is valid or log a message if a condition is met.
+
+2. **Non-Leaf Nodes (Logic Operators and Conditions):**
+   - **Conditions:** These are boolean checks that decide whether a particular branch of the tree should be followed.  
+     **Example:** Check if a user is older than 30.
+   - **Logic Operators (AND/OR):** These combine multiple conditions or nodes to form complex logical structures.
+     - **AND Node:** All child nodes must evaluate to `true` for this node to succeed.
+     - **OR Node:** At least one child node must evaluate to `true` for this node to succeed.
+
+
+### Tree Structure Overview
+
+The tree starts with a **Root Node**, which acts as the entry point for evaluation. Each branch of the tree can contain:
+- **Nodes**: Represent conditions or logical operators (AND/OR).
+- **Rules**: Contain the logic to be executed if the path through the tree is valid.
+
+**Key Behavior:**  
+If a condition in a node is not satisfied, the corresponding branch of the tree is skipped, and any rules under that branch
+will not be evaluated. This ensures that only relevant rules are executed, based on the conditions provided.
+
+
