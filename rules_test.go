@@ -23,10 +23,10 @@ func TestValidateTree(t *testing.T) {
 		executionPaths []string
 	}{
 		{
-			name: "test with Or and And nodes",
+			name: "test with AnyOf and And nodes",
 			tree: Root(
 				Node(ageGt30(user.age), Rules(rule1())),
-				Or(
+				AnyOf(
 					Node(ageGt1(user.age),
 						Rules(rule2())),
 					Node(ageLte30(user.age),
@@ -36,14 +36,14 @@ func TestValidateTree(t *testing.T) {
 			expect: 2,
 			executionPaths: []string{
 				"tree -> root -> ageGt30 -> leafNode -> rule1",
-				"tree -> root -> orNode -> ageGt1 -> leafNode -> rule2",
+				"tree -> root -> anyOfNode -> ageGt1 -> leafNode -> rule2",
 			},
 		},
 
 		{
 			name: "testWithAnd",
 			tree: Root(
-				And(
+				AllOf(
 					Node(ageLte30(user.age), Rules(rule1())),
 					Node(nameEqBob(user.name), Rules(rule2())),
 				),
@@ -53,15 +53,15 @@ func TestValidateTree(t *testing.T) {
 		},
 
 		{
-			name: "test with Or node",
+			name: "test with AnyOf node",
 			tree: Root(
-				Or(
+				AnyOf(
 					Node(ageLte30(user.age), Rules(rule1())),
 					Node(nameEqBob(user.name), Rules(rule2())),
 				),
 			),
 			expect:         1,
-			executionPaths: []string{"tree -> root -> orNode -> nameEqBob -> leafNode -> rule2"},
+			executionPaths: []string{"tree -> root -> anyOfNode -> nameEqBob -> leafNode -> rule2"},
 		},
 	}
 

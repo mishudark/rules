@@ -137,16 +137,16 @@ func (n *ConditionNode) Evaluate(ctx context.Context, executionPath string) (boo
 
 var _ Evaluable = (*ConditionNode)(nil) // Ensure ConditionNode implements the Evaluable interface.
 
-// AndNode represents a logical AND operation in the validation evaluation tree.
-// All of its child Evaluables must evaluate successfully for the AndNode itself
+// AllOfNode represents a logical AND operation in the validation evaluation tree.
+// All of its child Evaluables must evaluate successfully for the AllOfNode itself
 // to be considered successful.
-type AndNode struct {
+type AllOfNode struct {
 	Children []Evaluable // The children that must all evaluate successfully.
 }
 
-// PrepareConditions is a no-op for AndNode.
-func (andNode *AndNode) PrepareConditions(ctx context.Context) error {
-	for _, child := range andNode.Children {
+// PrepareConditions is a no-op for AllOfNode.
+func (n *AllOfNode) PrepareConditions(ctx context.Context) error {
+	for _, child := range n.Children {
 		err := child.PrepareConditions(ctx)
 		if err != nil {
 			return err
@@ -156,12 +156,12 @@ func (andNode *AndNode) PrepareConditions(ctx context.Context) error {
 	return nil
 }
 
-// Evaluate implements the Evaluable interface for AndNode. It iterates through
-// all its Children. If any child evaluates to false, the AndNode immediately
+// Evaluate implements the Evaluable interface for AllOfNode. It iterates through
+// all its Children. If any child evaluates to false, the AllOfNode immediately
 // returns false and nil rules. If all children evaluate to true, it returns true
-// and the combined list of Rules gathered from all children. An empty AndNode
+// and the combined list of Rules gathered from all children. An empty AllOfNode
 // is considered successful.
-func (n *AndNode) Evaluate(ctx context.Context, executionPath string) (bool, []Rule) {
+func (n *AllOfNode) Evaluate(ctx context.Context, executionPath string) (bool, []Rule) {
 	acc := []Rule{}
 
 	if len(n.Children) == 0 {
@@ -170,7 +170,7 @@ func (n *AndNode) Evaluate(ctx context.Context, executionPath string) (bool, []R
 
 	for i := 0; i < len(n.Children); i++ {
 		child := n.Children[i]
-		ok, rules := child.Evaluate(ctx, fmt.Sprintf("%s -> %s", executionPath, "andNode"))
+		ok, rules := child.Evaluate(ctx, fmt.Sprintf("%s -> %s", executionPath, "allOfNode"))
 		if ok {
 			acc = append(acc, rules...)
 		} else {
@@ -183,19 +183,19 @@ func (n *AndNode) Evaluate(ctx context.Context, executionPath string) (bool, []R
 	return true, acc
 }
 
-var _ Evaluable = (*AndNode)(nil) // Ensure AndNode implements the Evaluable interface.
+var _ Evaluable = (*AllOfNode)(nil) // Ensure AllOfNode implements the Evaluable interface.
 
-// OrNode represents a logical OR operation in the validation evaluation tree.
-// At least one of its child Evaluables must evaluate successfully for the OrNode
+// AnyOfNode represents a logical OR operation in the validation evaluation tree.
+// At least one of its child Evaluables must evaluate successfully for the AnyOfNode
 // itself to be considered successful.
-type OrNode struct {
-	name     string      // Name of the OrNode (optional) for identification or debugging.
+type AnyOfNode struct {
+	name     string      // Name of the AnyOfNode (optional) for identification or debugging.
 	Children []Evaluable // The children, where at least one must evaluate successfully.
 }
 
-// PrepareConditions is a no-op for OrNode.
-func (andNode *OrNode) PrepareConditions(ctx context.Context) error {
-	for _, child := range andNode.Children {
+// PrepareConditions is a no-op for AnyOfNode.
+func (n *AnyOfNode) PrepareConditions(ctx context.Context) error {
+	for _, child := range n.Children {
 		err := child.PrepareConditions(ctx)
 		if err != nil {
 			return err
@@ -205,16 +205,16 @@ func (andNode *OrNode) PrepareConditions(ctx context.Context) error {
 	return nil
 }
 
-// Evaluate implements the Evaluable interface for OrNode. It iterates through
-// all its Children. If at least one child evaluates to true, the OrNode returns
+// Evaluate implements the Evaluable interface for AnyOfNode. It iterates through
+// all its Children. If at least one child evaluates to true, the AnyOfNode returns
 // true along with the combined list of Rules gathered from *all* successful
 // children. If no children evaluate to true, it returns false and nil rules.
-// An empty OrNode is considered successful (or perhaps should be false, depending on desired logic - current impl returns true).
-func (n *OrNode) Evaluate(ctx context.Context, executionPath string) (bool, []Rule) {
+// An empty AnyOfNode is considered successful (or perhaps should be false, depending on desired logic - current impl returns true).
+func (n *AnyOfNode) Evaluate(ctx context.Context, executionPath string) (bool, []Rule) {
 	acc := []Rule{}
 
 	if len(n.Children) == 0 {
-		// Current implementation returns true, similar to AndNode.
+		// Current implementation returns true, similar to AllOfNode.
 		return true, acc
 	}
 
@@ -222,7 +222,7 @@ func (n *OrNode) Evaluate(ctx context.Context, executionPath string) (bool, []Ru
 
 	nodeName := n.name
 	if nodeName == "" {
-		nodeName = "orNode"
+		nodeName = "anyOfNode"
 	}
 
 	for i := 0; i < len(n.Children); i++ {
@@ -243,12 +243,12 @@ func (n *OrNode) Evaluate(ctx context.Context, executionPath string) (bool, []Ru
 	return true, acc
 }
 
-var _ Evaluable = (*OrNode)(nil) // Ensure OrNode implements the Evaluable interface.
+var _ Evaluable = (*AnyOfNode)(nil) // Ensure AnyOfNode implements the Evaluable interface.
 
-// And is a constructor function that creates and returns a new AndNode
+// And is a constructor function that creates and returns a new AllOfNode
 // containing the provided child Evaluables.
-func And(children ...Evaluable) Evaluable {
-	return &AndNode{Children: children}
+func AllOf(children ...Evaluable) Evaluable {
+	return &AllOfNode{Children: children}
 }
 
 // Rules is a constructor function that creates and returns a new LeafNode
@@ -267,20 +267,18 @@ func Node(condition Condition, children ...Evaluable) Evaluable {
 	}
 }
 
-// Or is a constructor function that creates and returns a new OrNode
+// Or is a constructor function that creates and returns a new AnyOfNode
 // containing the provided child Evaluables.
-func Or(Children ...Evaluable) Evaluable {
-	return &OrNode{Children: Children}
+func AnyOf(Children ...Evaluable) Evaluable {
+	return &AnyOfNode{Children: Children}
 }
 
 // Root is a constructor function often used to define the top-level node of
-// the validation evaluation tree. Currently, it creates an OrNode, implying the
+// the validation evaluation tree. Currently, it creates an AnyOfNode, implying the
 // root requires at least one of its top-level children to evaluate successfully.
-// Consider if an AndNode or a different structure might be more appropriate
-// depending on the desired overall validation logic.
 func Root(Children ...Evaluable) Evaluable {
-	// Note: Currently identical to Or().
-	return &OrNode{Children: Children, name: "root"}
+	// Note: Currently identical to AnyOf().
+	return &AnyOfNode{Children: Children, name: "root"}
 }
 
 type NotCondition struct {
