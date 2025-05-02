@@ -26,8 +26,8 @@ func (e Error) Error() string {
 type Condition interface {
 	// Prepare is executed before the main validation logic. It can be used to retrieve information.
 	Prepare(ctx context.Context) error
-	// GetName is a method to retrieve the name of the condition for debugging or logging.
-	GetName() string
+	// Name is a method to retrieve the name of the condition for debugging or logging.
+	Name() string
 	// Evaluate returns true if the condition is met, otherwise false.
 	IsValid(ctx context.Context) bool
 }
@@ -124,7 +124,7 @@ func (n *ConditionNode) Evaluate(ctx context.Context, executionPath string) (boo
 	matchRules := []Rule{}
 
 	for _, evaluable := range n.Evaluables {
-		ok, rules := evaluable.Evaluate(ctx, fmt.Sprintf("%s -> %s", executionPath, n.Condition.GetName()))
+		ok, rules := evaluable.Evaluate(ctx, fmt.Sprintf("%s -> %s", executionPath, n.Condition.Name()))
 		if ok {
 			matchRules = append(matchRules, rules...)
 		}
@@ -285,8 +285,8 @@ type NotCondition struct {
 	condition Condition
 }
 
-func (n *NotCondition) GetName() string {
-	return fmt.Sprintf("Not -> %s", n.condition.GetName())
+func (n *NotCondition) Name() string {
+	return fmt.Sprintf("Not -> %s", n.condition.Name())
 }
 
 func (n *NotCondition) Prepare(ctx context.Context) error {
@@ -428,7 +428,7 @@ func (c *ConditionPure) Prepare(context.Context) error {
 	return nil
 }
 
-func (c *ConditionPure) GetName() string {
+func (c *ConditionPure) Name() string {
 	return c.name
 }
 
