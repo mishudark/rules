@@ -1,101 +1,81 @@
-# Go Rules Engine
-
-This Go package provides a flexible and powerful system for defining and evaluating 
-hierarchical rule trees. It allows you to build complex conditional logic using conditions
-and rules, organized with logical operators like AND/OR.
-
----
-
-## 🚀 Features
-
-- Define custom conditions and rules.
-- Build logical trees with AND/OR nodes.
-- Validate and evaluate rules with hooks for customization.
-- Supports hierarchical and nested conditions.
-
----
-
-## 🛠️ Building a Rule Tree
-
-### Example: User Validation
-
-```go
-import (
-	"context"
-	"fmt"
-	"github.com/mishudark/rules"
-)
-
-// Define User
-type User struct {
-	Age  int
-	Name string
-}
-
-func main() {
-	user := User{
-		Age:  33,
-		Name: "Bob",
-	}
-
-	// Build the rule tree
-	tree := rules.Root(
-		rules.Node(ageGt30(user.Age), rules.Rules(rule1())),
-		rules.Node(nameEqBob(user.Name), rules.Rules(rule2())),
-	)
-}
-
-// Define Conditions
-func ageGt30(age int) rules.Condition {
-	return rules.NewConditionPure("ageGt30", func() bool { return age > 30 })
-}
-
-func nameEqBob(name string) rules.Condition {
-	return rules.NewConditionPure("nameEqBob", func() bool { return name == "Bob" })
-}
-
-// Define Rules
-func rule1() rules.Rule {
-	return rules.NewRulePure("rule1", func() error {
-		fmt.Println("Rule 1: User is older than 30!")
-		return nil
-	})
-}
-
-func rule2() rules.Rule {
-	return rules.NewRulePure("rule2", func() error {
-		fmt.Println("Rule 2: User's name is Bob!")
-		return nil
-	})
-}
-```
+# Go Rules Engine: Flexible Validation Trees
 
 
-## 🛠️ How to Run the validations
+This library helps you build flexible and powerful validation logic in Go. Think of it like creating decision trees where you can define conditions ("IF this is true...") and corresponding validation rules ("THEN check these things..."). It's designed to be clear, extensible, and easy to follow.
 
-(Optional) You can add hooks by initializing a ProcessingHooks struct and assigning custom functions to the respective hooks.
+## ✨ Quick Start: Usage Example
 
-### Example: Adding Logging Hooks
-This example demonstrates how to use hooks to log specific stages of the validation process.
+Let's dive right in with an example. Imagine you want to validate user data based on certain criteria:
 
 ```go
 package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log"
+	"strings"
 
 	"github.com/mishudark/rules"
 )
 
-// Define User struct
+// Mock User Data
 type User struct {
 	Name    string
 	Age     int
-	Address string
 	Zipcode string
 	Country string
 }
+
+// Define Your Conditions (The "IFs")
+
+// Condition: Check if the name is not empty
+func nameNotEmpty(name string) rules.Condition {
+	return rules.NewConditionPure("nameNotEmpty", func() bool {
+		return name != ""
+	})
+}
+
+// Condition: Check if country is USA
+func countryIsUSA(country string) rules.Condition {
+	return rules.NewConditionPure("countryIsUSA", func() bool {
+		return strings.ToUpper(country) == "USA"
+	})
+}
+
+// Define Your Rules (The "THEN Checks")
+
+// Rule: Check if age is greater than 20
+func ageGreaterThan20(age int) rules.Rule {
+	return rules.NewRulePure("ageGreaterThan20", func() error {
+		if age <= 20 {
+			return rules.Error{Field: "Age", Err: "Age must be greater than 20", Code: "AGE_TOO_LOW"}
+		}
+		return nil // Success!
+	})
+}
+
+// Rule: Check if zipcode is valid (simple example: 5 digits)
+func ruleValidZipCode(zip string) rules.Rule {
+	return rules.NewRulePure("ruleValidZipCode", func() error {
+		if len(zip) != 5 {
+			return rules.Error{Field: "Zipcode", Err: "Zipcode must be 5 digits", Code: "INVALID_ZIP"}
+		}
+		// Add more sophisticated zip checks if needed
+		return nil // Success!
+	})
+}
+
+// Rule: Action to take if the user is generally invalid (e.g., name empty)
+func ruleInvalidUser() rules.Rule {
+	return rules.NewRulePure("ruleInvalidUser", func() error {
+		return errors.New("invalid user configuration detected")
+		// Or return a structured error:
+		// return rules.Error{Field: "User", Err: "General invalid user data", Code: "INVALID_USER"}
+	})
+}
+
 
 func main() {
 	// Example User
@@ -106,191 +86,201 @@ func main() {
 		Country: "USA",
 	}
 
-	tree := rules.Root(
-		rules.Node(
-			nameNotEmpty(user.Name),
-			rules.Rules(ruleValidZipCode(user.Zipcode)),
-			rules.Node(
-				countryIsUSA(user.Country),
-				rules.Rules(
+    // This tree defines the logic:
+    // - IF name is not empty:
+    //   - THEN check the ZipCode validity.
+    //   - AND IF the country is USA:
+    //     - THEN check if age > 20.
+    // - IF name IS empty (using Not):
+    //   - THEN run the 'invalid user' rule.
+	tree := rules.Root( // Root usually acts like an "AnyOf" - at least one main branch must succeed
+		rules.Node( // A conditional node: IF Condition THEN check children
+			nameNotEmpty(user.Name), // The Condition for this branch
+			rules.Rules(ruleValidZipCode(user.Zipcode)), // A rule to run if the condition is true
+			rules.Node( // A nested conditional node
+				countryIsUSA(user.Country), // Nested condition: only checked if parent condition (nameNotEmpty) was true
+				rules.Rules( // The rules to run if THIS nested condition is also true
 					ageGreaterThan20(user.Age),
 				),
 			),
 		),
-		rules.Node(
-			rules.Not(
-				nameNotEmpty(user.Name),
-			),
-			rules.Rules(ruleInvalidUser()),
+		rules.Node( // Another top-level branch
+			rules.Not(nameNotEmpty(user.Name)), // Condition: IF name IS empty
+			rules.Rules(ruleInvalidUser()),    // Rule to run if name is empty
 		),
 	)
 
-    hooks := ProcessingHooks {
+    // (Optional) Define Hooks
+    // Hooks let you run code at different stages of the validation process
+    hooks := rules.ProcessingHooks {
         AfterPrepareConditions: func(ctx context.Context) {
-            log.Println("After preparing conditions")
+            log.Println("Hooks: Finished preparing all conditions.")
         },
         AfterEvaluateConditions: func(ctx context.Context) {
-            log.Println("After evaluating conditions")
+            log.Println("Hooks: Finished evaluating conditions.")
         },
         AfterPrepareRules: func(ctx context.Context) {
-            log.Println("After preparing rules")
+            log.Println("Hooks: Finished preparing the selected rules.")
         },
         AfterValidateRules: func(ctx context.Context) {
-            log.Println("After validating rules")
+            log.Println("Hooks: Finished validating the selected rules.")
         },
     }
 
-	// Validate the tree
+	// Validate the Tree
 	ctx := context.Background()
-	err := rules.Validate(ctx, tree, hooks, "userValidationTree")
+	// Give your validation process a name for context (e.g., in logs or rule paths)
+	validationName := "userValidationProcess"
+	err := rules.Validate(ctx, tree, hooks, validationName)
 
-	// Check for validation errors
+	// Check for Validation Errors
 	if err != nil {
-		fmt.Printf("Validation errors: %v\n", err)
+		fmt.Printf("Validation failed: %v\n", err)
 	} else {
 		fmt.Println("Validation completed successfully!")
 	}
 }
-
-func nameNotEmpty(name string) rules.Condition {
-	return rules.NewConditionPure("nameNotEmpty", func() bool {
-		return name != ""
-	})
-}
-
-func countryIsUSA(country string) rules.Condition {
-	return rules.NewConditionPure("countryIsUSA", func() bool {
-		return country == "USA"
-	})
-}
-
-func ruleInvalidUser() rules.Rule {
-	return rules.NewRulePure("ruleInvalidUser", func() error {
-		return fmt.Errorf("User is invalid")
-	})
-}
-
-func ruleValidZipCode(zipcode string) rules.Rule {
-	return rules.NewRulePure("ruleInvalidZipCode", func() error {
-		if len(zipcode) == 5 {
-			return nil
-		}
-
-		return fmt.Errorf("Validation failed: ZIP code is invalid.")
-	})
-}
-
-func ageGreaterThan20(age int) rules.Rule {
-	return rules.NewRulePure("ageGreaterThan18", func() error {
-		if age > 20 {
-			return nil
-		}
-
-		return fmt.Errorf("age must be greater than 18")
-	})
-}
-
-
 ```
 
-## Example Tree Explanation
+## 📚 Documentation
 
-This `tree` defines a hierarchical structure of rules for validating user data. The validation logic is implemented using nodes and rules. Below is an explanation of how this tree works:
+🤔 How It Works: The Friendly Guide
+Okay, so how does this magic happen? Let's break it down.
 
-## How the Tree Works
+Imagine you're building a flowchart for checking things. This library helps you build that flowchart in code.
 
-The tree processes the rules and conditions in a hierarchical manner, starting from the root node:
+- **The Big Picture: The Tree** (`Evaluable`)
+    - Everything starts with a Tree. This tree is made up of different kinds of Nodes.
+    - The rules.Validate function is the engine that walks through your tree.
+    - Each part of the tree that can be checked or evaluated is called an Evaluable.
+- **Decision Points: Conditions (`Condition`)**
+    - How does the tree decide which path to take? With **Conditions**!
+    - A `Condition` is like a question: "Is this true?". It has an `IsValid()` method that returns `true` or `false`.
+    - You create conditions using helpers like `NewConditionPure` for simple checks, or you can implement the `Condition` interface yourself for more complex logic (like fetching data in the `Prepare` step before checking `IsValid`).
+    - We also have `rules.Not(condition)` which flips the result of a condition (like "IF name is NOT empty").
+- **Conditional Branches: `ConditionNode` (`rules.Node`)**
+    - This is the most common building block. It pairs a `Condition` with one or more children (`Evaluables`).
+    - **IF** the `Condition` is `true`, **THEN** the engine looks at the children of this node.
+    - You create these using `rules.Node(myCondition, child1, child2, ...)`.
+- **Actions: Rules (`Rule`)**
+    - When the engine follows a path down the tree and reaches the end of a branch (or a specific point), it finds the **Rules** it needs to execute.
+    - A `Rule` represents a single validation check (e.g., "is the age over 20?").
+    - It has a `Validate()` method. If the check fails, `Validate()` returns an `error` (preferably a `rules.Error` with details). If it passes, it returns `nil`.
+    - Rules can also have a `Prepare()` step, just like conditions, for any setup needed before validation.
+    - You define rules using helpers like `NewRulePure` for simple functions, or by implementing the `Rule` interface.
+- **Rule Containers: `LeafNode` (`rules.Rules`)**
+    - Often, when a condition is met, you want to run one or more rules.
+    - `rules.Rules(myRule1, myRule2)` creates a simple container (`LeafNode`) that holds these rules. It's placed as a child in the tree (often inside a `ConditionNode`). It always evaluates to `true` (meaning "yes, run these rules if you reach me") and provides its list of rules.
+- **Logical Grouping: `AllOfNode` (`rules.AllOf`) and `AnyOfNode` (`rules.AnyOf`, `rules.Root`)**
+    - Sometimes you need more complex logic than just one condition:
+        - `rules.AllOf(child1, child2)`: All of these children must evaluate successfully for the AllOf node to succeed. Think **AND**.
+        - `rules.AnyOf(child1, child2)`: At least one of these children must evaluate successfully for the AnyOf node to succeed. Think **OR**.
+        - `rules.Root(...)`: This is often used for the very top of your tree and typically behaves like `AnyOf`.
 
-1. **First Node**:
-   - If the user's name is not empty:
-     - Validate the zip code.
-     - Check if the user's country is the USA.
-       - If the country is the USA, validate that the age is greater than 20.
-   - If the user's name is empty, skip this node and move to the next.
+## 🧩 Core Concepts & Components
 
-2. **Second Node**:
-   - If the user's name is empty:
-     - Mark the user as invalid using `ruleInvalidUser()`.
+Here's a quick reference to the main pieces:
 
----
-
-## Example Flow
-
-1. If the user's name is **not empty**:
-   - Validate the zip code.
-   - Check if the country is **USA**:
-     - If true, validate that the age is greater than 20.
-
-2. If the user's name **is empty**:
-   - Mark the user as invalid.
-
----
-
-## Key Features
-
-- **Top-Down Evaluation**: The tree evaluates conditions and rules sequentially in a top-down manner.
-- **Flexible Validation**: The hierarchical structure allows for modular validation logic.
-- **Negation Support**: The `rules.Not` function enables handling cases where conditions should evaluate to `false`.
-
-This structure provides a clear and modular way to define and validate complex user rules.
-
----
-
-## 📖 How It Works
-
-### Key Components
-
-1. **`Condition`**  
-   A boolean check that determines if a branch of the tree should be followed.  
-   **Example:** Check if a user is older than 30.  
-
-2. **`Rule`**  
-   Represents a unit of logic or action to execute if its conditions are met.  
-   **Example:** Print a message if the user is valid.
-
-3. **`Evaluable`**  
-   The building block of the rule tree, which can be evaluated.  
-   Combines conditions and rules into logical structures.
-
-4. **`Hooks`**
-   Are customizable points in the validation process that allow custom logic to execute at key stages. Hooks include:
-
-   - **`AfterPrepareConditions`**: Executes after preparing conditions for evaluation.
-   - **`AfterEvaluateConditions`**: Executes after evaluating conditions and determining candidate rules.
-   - **`AfterPrepareRules`**: Executes after preparing rules for evaluation.
-   - **`AfterValidateRules`**: Executes after validating the prepared rules.
-## 🔗 Logical Nodes
-
-- **`Root`**: The starting point of your tree.
-- **`Node`**: A single condition with child nodes or rules.
-- **`And`**: All child nodes must evaluate to true.
-- **`Or`**: At least one child node must evaluate to true.
-- **`Rules`**: Contains the actions or validations to execute.
+* **`Evaluable`**: The interface for any part of the tree that can be evaluated (Nodes, Rule sets). Has `PrepareConditions` and `Evaluate` methods.
+* **`Condition`**: Interface for checks that return `true` or `false`. Has `Prepare`, `Name`, and `IsValid` methods.
+    * `ConditionPure`: A simple implementation using just a function.
+    * `NotCondition`: Wraps another condition to negate its result.
+* **`Rule`**: Interface for the actual validation logic. Has `Name`, `Prepare`, `Validate`, `SetExecutionPath`, and `GetExecutionPath` methods.
+    * `RulePure`: A simple implementation using just a function for `Validate`.
+    * `ChainRules`: Executes multiple rules in sequence.
+    * `RuleBase`: Embeddable helper for handling execution paths.
+* **Nodes**:
+    * `ConditionNode`: Links a `Condition` to child `Evaluable`s. (`rules.Node`)
+    * `LeafNode`: Holds a list of `Rule`s to be executed. (`rules.Rules`)
+    * `AllOfNode`: Logical AND for child `Evaluable`s. (`rules.AllOf`)
+    * `AnyOfNode`: Logical OR for child `Evaluable`s. (`rules.AnyOf`, `rules.Root`)
+* **`Error`**: A struct for detailed validation errors.
+* **`ProcessingHooks`**: Struct holding functions to hook into the validation lifecycle.
+* **`Validate(...)`**: The main function to execute the validation against a tree.
 
 
-### The engine operates as a tree structure where:
+## ✨ Creating Custom Conditions and Rules
+The real power comes when you implement the Condition and Rule interfaces yourself!
 
-1. **Leaf Nodes (Rules):**  
-   These are the endpoints of the tree, containing the actual rules or actions to be executed.
-   A rule can perform a specific validation or action when its conditions are satisfied.  
-   **Example:** A rule might check if a user’s age is valid or log a message if a condition is met.
+**Custom Condition Example:**
+```go
+type UserExistsCondition struct {
+    UserID    string
+    UserAPI   YourUserAPIClient // Assuming you have an API client
+    userFound bool              // Store result after Prepare
+    name      string            // Store name for logging/debugging
+}
 
-2. **Non-Leaf Nodes (Logic Operators and Conditions):**
-   - **Conditions:** These are boolean checks that decide whether a particular branch of the tree should be followed.  
-     **Example:** Check if a user is older than 30.
-   - **Logic Operators (AND/OR):** These combine multiple conditions or nodes to form complex logical structures.
-     - **AND Node:** All child nodes must evaluate to `true` for this node to succeed.
-     - **OR Node:** At least one child node must evaluate to `true` for this node to succeed.
+func NewUserExistsCondition(userID string, apiClient YourUserAPIClient) rules.Condition {
+    return &UserExistsCondition{UserID: userID, UserAPI: apiClient, name: fmt.Sprintf("UserExists[%s]", userID)}
+}
 
+func (c *UserExistsCondition) Name() string {
+    return c.name
+}
 
-### Tree Structure Overview
+// Prepare is great for fetching data needed for the condition
+func (c *UserExistsCondition) Prepare(ctx context.Context) error {
+    exists, err := c.UserAPI.CheckIfUserExists(ctx, c.UserID)
+    if err != nil {
+        // Maybe return an error if the API call fails, stopping validation early
+        return fmt.Errorf("failed to check user existence for %s: %w", c.UserID, err)
+    }
+    c.userFound = exists
+    log.Printf("Prepared %s: User found = %t\n", c.Name(), c.userFound)
+    return nil // Prepare succeeded
+}
 
-The tree starts with a **Root Node**, which acts as the entry point for evaluation. Each branch of the tree can contain:
-- **Nodes**: Represent conditions or logical operators (AND/OR).
-- **Rules**: Contain the logic to be executed if the path through the tree is valid.
+// IsValid uses the data fetched during Prepare
+func (c *UserExistsCondition) IsValid(ctx context.Context) bool {
+    // The check logic is now very simple!
+    return c.userFound
+}
 
-**Key Behavior:**  
-If a condition in a node is not satisfied, the corresponding branch of the tree is skipped, and any rules under that branch
-will not be evaluated. This ensures that only relevant rules are executed, based on the conditions provided.
+var _ rules.Condition = (*UserExistsCondition)(nil) // Compile-time check
+```
 
+**Custom Rule Example:**
+```go
+type DatabaseSyncRule struct {
+    rules.RuleBase // Embed for Get/SetExecutionPath
+    Data          YourDataType
+    DB            YourDatabaseClient
+    name          string
+}
 
+func NewDatabaseSyncRule(data YourDataType, db YourDatabaseClient) rules.Rule {
+	return &DatabaseSyncRule{Data: data, DB: db, name: "DatabaseSyncRule"}
+}
+
+func (r *DatabaseSyncRule) Name() string {
+	return r.name
+}
+
+// Prepare could potentially check DB connection, etc.
+func (r *DatabaseSyncRule) Prepare(ctx context.Context) error {
+    log.Printf("Preparing Rule: %s at path %s\n", r.Name(), r.GetExecutionPath())
+	err := r.DB.Ping(ctx)
+	if err != nil {
+		return fmt.Errorf("database connection check failed for %s: %w", r.Name(), err)
+	}
+	return nil
+}
+
+// Validate performs the actual database operation
+func (r *DatabaseSyncRule) Validate(ctx context.Context) error {
+    log.Printf("Validating Rule: %s at path %s\n", r.Name(), r.GetExecutionPath())
+	err := r.DB.SyncData(ctx, r.Data)
+	if err != nil {
+        // Return a structured error
+		return rules.Error{
+			Field: "DatabaseSync",
+			Err:   fmt.Sprintf("Failed to sync data: %v", err),
+			Code:  "DB_SYNC_FAILED",
+		}
+	}
+	return nil // Success!
+}
+
+var _ rules.Rule = (*DatabaseSyncRule)(nil) // Compile-time check
+```
