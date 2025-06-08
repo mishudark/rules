@@ -198,6 +198,24 @@ Here's a quick reference to the main pieces:
 * **`ProcessingHooks`**: Struct holding functions to hook into the validation lifecycle.
 * **`Validate(...)`**: The main function to execute the validation against a tree.
 
+## ✅ Available Validators
+
+Here is a list of the currently available validators in this library:
+
+- Comma Separated Integer List Validator
+- Content Type
+- Decimal Validator
+- Domain
+- Email
+- File Extension Validator
+- Ip Address Validator
+- Length
+- Max Value
+- Min Value
+- Prohibit Null Characters Validator
+- Slug
+- Step Value Validator
+- Url Validator
 
 ## ✨ Creating Custom Conditions and Rules
 The real power comes when you implement the Condition and Rule interfaces yourself!
