@@ -1,9 +1,11 @@
-package rules
+package validators
 
 import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/mishudark/rules"
 )
 
 func TestRuleValidDomainNameAdvanced(t *testing.T) {
@@ -58,7 +60,7 @@ func TestRuleValidDomainNameAdvanced(t *testing.T) {
 					t.Errorf("Expected validation to fail for domain '%s' (idna=%t), but it succeeded.", tc.domain, tc.acceptIdna)
 				} else {
 					// Optional: Check if the error is the specific rules.Error type and code
-					if rulesErr, ok := err.(Error); ok {
+					if rulesErr, ok := err.(rules.Error); ok {
 						if rulesErr.Code != tc.errCode {
 							t.Errorf("Expected error code '%s' but got '%s' for domain '%s' (idna=%t). Error: %v",
 								tc.errCode, rulesErr.Code, tc.domain, tc.acceptIdna, rulesErr)

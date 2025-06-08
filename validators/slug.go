@@ -1,8 +1,10 @@
-package rules
+package validators
 
 import (
 	"fmt"
 	"regexp"
+
+	"github.com/mishudark/rules"
 )
 
 var (
@@ -18,10 +20,10 @@ var (
 // Slugs can consist of letters, numbers, underscores, or hyphens.
 // If allowUnicode is true, it permits Unicode letters and numbers; otherwise, only ASCII.
 // It considers an empty string as valid (use a separate 'Required' rule if needed).
-func RuleValidSlug(fieldName string, slug string, allowUnicode bool) Rule {
+func RuleValidSlug(fieldName string, slug string, allowUnicode bool) rules.Rule {
 	ruleName := fmt.Sprintf("RuleValidSlug[%s, unicode=%t]", fieldName, allowUnicode)
 
-	return NewRulePure(ruleName, func() error {
+	return rules.NewRulePure(ruleName, func() error {
 		// Allow empty slugs by default, similar to how other rules handle empty strings.
 		// Add a separate "Required" rule if slugs cannot be empty.
 		if slug == "" {
@@ -41,7 +43,7 @@ func RuleValidSlug(fieldName string, slug string, allowUnicode bool) Rule {
 
 		// Check if the slug matches the chosen pattern.
 		if !chosenRegex.MatchString(slug) {
-			return Error{
+			return rules.Error{
 				Field: fieldName,
 				Err:   message,
 				Code:  "INVALID_SLUG",

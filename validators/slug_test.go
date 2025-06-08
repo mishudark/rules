@@ -1,8 +1,10 @@
-package rules
+package validators
 
 import (
 	"context" // Context is often needed, even if not used by RulePure's Validate
 	"testing" // Import the standard testing package
+
+	"github.com/mishudark/rules"
 )
 
 // TestRuleValidSlug tests the slug validation rule.
@@ -95,7 +97,7 @@ func TestRuleValidSlug(t *testing.T) {
 					t.Errorf("Expected validation to fail for slug '%s' (unicode=%t), but it succeeded.", tc.slug, tc.allowUnicode)
 				} else {
 					// Optional: Check if the error is the specific rules.Error type and code
-					if rulesErr, ok := err.(Error); ok {
+					if rulesErr, ok := err.(rules.Error); ok {
 						if tc.errCode != "" && rulesErr.Code != tc.errCode {
 							t.Errorf("Expected error code '%s' but got '%s' for slug '%s' (unicode=%t). Error: %v",
 								tc.errCode, rulesErr.Code, tc.slug, tc.allowUnicode, rulesErr)

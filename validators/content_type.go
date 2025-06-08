@@ -1,4 +1,4 @@
-package rules
+package validators
 
 import (
 	"context"
@@ -7,23 +7,25 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+
+	"github.com/mishudark/rules"
 )
 
 // RuleValidContentType checks if the content type detected by http.DetectContentType
 // matches one of the allowed MIME types.
 type RuleValidContentType struct {
-	RuleBase               // Embed for execution path handling
-	fieldName    string    // Name of the field being validated (e.g., "UploadedFile")
-	reader       io.Reader // Reader providing the file content
-	allowedMIMEs []string  // List of allowed MIME types (e.g., ["image/jpeg", "application/pdf"])
+	rules.RuleBase           // Embed for execution path handling
+	fieldName      string    // Name of the field being validated (e.g., "UploadedFile")
+	reader         io.Reader // Reader providing the file content
+	allowedMIMEs   []string  // List of allowed MIME types (e.g., ["image/jpeg", "application/pdf"])
 }
 
 // Ensure RuleValidContentType implements the Rule interface.
-var _ Rule = (*RuleValidContentType)(nil)
+var _ rules.Rule = (*RuleValidContentType)(nil)
 
 // NewRuleContentType creates a new instance of the content type validation rule.
 // allowedMIMEs should be standard MIME type strings.
-func NewRuleContentType(fieldName string, reader io.Reader, allowedMIMEs []string) Rule {
+func NewRuleContentType(fieldName string, reader io.Reader, allowedMIMEs []string) rules.Rule {
 	// Normalize allowed MIME types to lowercase for case-insensitive comparison
 	normalizedMIMEs := make([]string, len(allowedMIMEs))
 	for i, mime := range allowedMIMEs {
@@ -70,7 +72,7 @@ func (r *RuleValidContentType) Validate(ctx context.Context) error {
 				return nil
 			}
 			// Otherwise, an empty file cannot match any specific MIME type.
-			return Error{
+			return rules.Error{
 				Field: r.fieldName,
 				Err:   "File is empty",
 				Code:  "CONTENT_TYPE_EMPTY_FILE",
@@ -80,7 +82,7 @@ func (r *RuleValidContentType) Validate(ctx context.Context) error {
 		// that's fine, we just use the bytes we got.
 		if err != io.EOF && err != io.ErrUnexpectedEOF {
 			// Any other error is a problem.
-			return Error{
+			return rules.Error{
 				Field: r.fieldName,
 				Err:   fmt.Sprintf("Failed to read file content for content type detection: %v", err),
 				Code:  "CONTENT_TYPE_READ_ERROR",
@@ -110,7 +112,7 @@ func (r *RuleValidContentType) Validate(ctx context.Context) error {
 	}
 
 	// If no match was found in the allowed list.
-	return Error{
+	return rules.Error{
 		Field: r.fieldName,
 		Err:   fmt.Sprintf("Detected content type '%s' is not in the allowed list: %v", detectedContentType, r.allowedMIMEs),
 		Code:  "CONTENT_TYPE_MISMATCH",

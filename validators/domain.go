@@ -1,10 +1,12 @@
-package rules
+package validators
 
 import (
 	"fmt"
 	"regexp"
 	"strings"
 	"unicode/utf8" // Needed for RuneCountInString and ASCII check
+
+	"github.com/mishudark/rules"
 )
 
 const (
@@ -43,10 +45,10 @@ var (
 // Due to Go's regex limitations (no lookarounds), it combines regex with manual checks.
 //
 // It considers an empty string as valid (use a separate 'Required' rule if needed).
-func RuleValidDomainNameAdvanced(fieldName string, domain string, acceptIdna bool) Rule {
+func RuleValidDomainNameAdvanced(fieldName string, domain string, acceptIdna bool) rules.Rule {
 	ruleName := fmt.Sprintf("RuleValidDomainNameAdvanced[%s, idna=%t]", fieldName, acceptIdna)
 
-	return NewRulePure(ruleName, func() error {
+	return rules.NewRulePure(ruleName, func() error {
 		trimmedDomain := strings.TrimSpace(domain)
 		if trimmedDomain == "" {
 			return nil // Empty string is not an invalid *format*
@@ -54,7 +56,7 @@ func RuleValidDomainNameAdvanced(fieldName string, domain string, acceptIdna boo
 
 		// Overall Length Check (Bytes)
 		if len(trimmedDomain) > maxDomainLengthAdvanced {
-			return Error{
+			return rules.Error{
 				Field: fieldName,
 				Err:   fmt.Sprintf("Domain name exceeds maximum length of %d bytes", maxDomainLengthAdvanced),
 				Code:  "INVALID_DOMAIN_LENGTH",
@@ -64,7 +66,7 @@ func RuleValidDomainNameAdvanced(fieldName string, domain string, acceptIdna boo
 		// ASCII Check (if IDNA is not accepted)
 		if !acceptIdna {
 			if !asciiOnlyRegex.MatchString(trimmedDomain) {
-				return Error{
+				return rules.Error{
 					Field: fieldName,
 					Err:   "Domain name contains non-ASCII characters, but IDNA is not accepted",
 					Code:  "NON_ASCII_DOMAIN_NOT_ALLOWED",
@@ -74,7 +76,7 @@ func RuleValidDomainNameAdvanced(fieldName string, domain string, acceptIdna boo
 
 		// Reject trailing dot early, as Split behavior depends on it.
 		if strings.HasSuffix(trimmedDomain, ".") {
-			return Error{
+			return rules.Error{
 				Field: fieldName,
 				Err:   "Domain name must not end with a dot",
 				Code:  "INVALID_DOMAIN_TRAILING_DOT", // Specific code for this case
@@ -85,7 +87,7 @@ func RuleValidDomainNameAdvanced(fieldName string, domain string, acceptIdna boo
 
 		if len(labels) < 2 { // Must have at least one label and a TLD
 			// This also catches cases like "com" or just "hostname"
-			return Error{
+			return rules.Error{
 				Field: fieldName,
 				Err:   "Invalid domain name format (must contain at least one label and a TLD)",
 				Code:  "INVALID_DOMAIN_STRUCTURE",
@@ -95,7 +97,7 @@ func RuleValidDomainNameAdvanced(fieldName string, domain string, acceptIdna boo
 		for i, label := range labels {
 			if len(label) == 0 {
 				// Catch cases like "example..com"
-				return Error{
+				return rules.Error{
 					Field: fieldName,
 					Err:   fmt.Sprintf("Invalid domain name format (empty label found before '%s')", strings.Join(labels[i+1:], ".")),
 					Code:  "INVALID_DOMAIN_EMPTY_LABEL",
@@ -106,7 +108,7 @@ func RuleValidDomainNameAdvanced(fieldName string, domain string, acceptIdna boo
 			// Note: RFC specifies octets (bytes) for length limits in DNS, but Unicode complicates this.
 			// check character length. Let's stick to character count for labels.
 			if utf8.RuneCountInString(label) > maxDomainLabelLength {
-				return Error{
+				return rules.Error{
 					Field: fieldName,
 					Err:   fmt.Sprintf("Domain label '%s' exceeds maximum length of %d characters", label, maxDomainLabelLength),
 					Code:  "INVALID_DOMAIN_LABEL_LENGTH",
@@ -115,7 +117,7 @@ func RuleValidDomainNameAdvanced(fieldName string, domain string, acceptIdna boo
 
 			// Check for leading or trailing hyphens in the label
 			if strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
-				return Error{
+				return rules.Error{
 					Field: fieldName,
 					Err:   fmt.Sprintf("Domain label '%s' must not start or end with a hyphen", label),
 					Code:  "INVALID_DOMAIN_LABEL_HYPHEN",
@@ -126,7 +128,7 @@ func RuleValidDomainNameAdvanced(fieldName string, domain string, acceptIdna boo
 			if i == len(labels)-1 {
 				// Basic TLD length (characters) - should be at least 2
 				if utf8.RuneCountInString(label) < 2 {
-					return Error{
+					return rules.Error{
 						Field: fieldName,
 						Err:   fmt.Sprintf("Top-level domain '%s' must be at least 2 characters long", label),
 						Code:  "INVALID_DOMAIN_TLD_LENGTH",
@@ -134,7 +136,7 @@ func RuleValidDomainNameAdvanced(fieldName string, domain string, acceptIdna boo
 				}
 				// Check for Punycode prefix if not accepting IDNA
 				if !acceptIdna && strings.HasPrefix(label, "xn--") {
-					return Error{
+					return rules.Error{
 						Field: fieldName,
 						Err:   fmt.Sprintf("Top-level domain '%s' uses Punycode, but IDNA is not accepted", label),
 						Code:  "PUNYCODE_TLD_NOT_ALLOWED",
@@ -161,7 +163,7 @@ func RuleValidDomainNameAdvanced(fieldName string, domain string, acceptIdna boo
 
 		if !chosenRegex.MatchString(trimmedDomain) {
 			// This should ideally catch fewer cases now, maybe complex structural issues missed by manual checks.
-			return Error{
+			return rules.Error{
 				Field: fieldName,
 				Err:   "Invalid domain name format (failed final regex structure check)",
 				Code:  "INVALID_DOMAIN_FORMAT_REGEX",

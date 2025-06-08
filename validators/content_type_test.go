@@ -1,10 +1,12 @@
-package rules
+package validators
 
 import (
 	"bytes"
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/mishudark/rules"
 )
 
 func TestRuleValidContentType(t *testing.T) {
@@ -119,7 +121,7 @@ func TestRuleValidContentType(t *testing.T) {
 					t.Errorf("Expected validation to fail, but it succeeded.")
 				} else {
 					// Optional: Check if the error is the specific rules.Error type and code
-					if rulesErr, ok := err.(Error); ok {
+					if rulesErr, ok := err.(rules.Error); ok {
 						if tc.errCode != "" && rulesErr.Code != tc.errCode {
 							t.Errorf("Expected error code '%s' but got '%s'. Error: %v",
 								tc.errCode, rulesErr.Code, rulesErr)

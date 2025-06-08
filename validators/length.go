@@ -1,15 +1,19 @@
-package rules
+package validators
 
-import "fmt"
+import (
+	"fmt"
 
-func LengthString(fieldName, value string, length int) Rule {
-	return NewRulePure("lengthString",
+	"github.com/mishudark/rules"
+)
+
+func LengthString(fieldName, value string, length int) rules.Rule {
+	return rules.NewRulePure("lengthString",
 		func() error {
 			if len([]rune(value)) == length {
 				return nil
 			}
 
-			return &Error{
+			return &rules.Error{
 				Field: fieldName,
 				Err:   fmt.Sprintf("expected %d, got %d", length, len(value)),
 				Code:  "LENGTH_STRING",
@@ -18,14 +22,14 @@ func LengthString(fieldName, value string, length int) Rule {
 	)
 }
 
-func LengthSlice(fieldName string, value []any, length int) Rule {
-	return NewRulePure("lengthSlice",
+func LengthSlice(fieldName string, value []any, length int) rules.Rule {
+	return rules.NewRulePure("lengthSlice",
 		func() error {
 			if len(value) == length {
 				return nil
 			}
 
-			return &Error{
+			return &rules.Error{
 				Field: fieldName,
 				Err:   fmt.Sprintf("expected %d, got %d", length, len(value)),
 				Code:  "LENGTH_SLICE",
