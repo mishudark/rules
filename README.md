@@ -1,7 +1,16 @@
-# Go Rules Engine: Flexible Validation Trees
+# Go Rules Engine: Flexible Validation & Decision Trees
 
+The Go Rules Engine is a powerful and extensible Go library designed to simplify the creation of complex validation and decision-making logic. It allows you to define flexible rule trees, enabling clear separation of concerns between conditions ("IF this is true...") and the actions or validations that follow ("THEN perform these checks...").
 
-This library helps you build flexible and powerful validation logic in Go. Think of it like creating decision trees where you can define conditions ("IF this is true...") and corresponding validation rules ("THEN check these things..."). It's designed to be clear, extensible, and easy to follow.
+**Key Features:**
+*   **Intuitive Tree Structure:** Build decision flows with `Condition`s and `Rule`s organized into a readable tree.
+*   **Extensible Components:** Easily define custom conditions and rules to fit your specific business logic.
+*   **Clear Separation of Concerns:** Distinguish between `Condition` evaluation and `Rule` execution.
+*   **Context-Aware Processing:** Leverage `context.Context` for managing timeouts, cancellations, and request-scoped data.
+*   **Detailed Error Reporting:** Capture and report specific validation errors with `rules.Error`.
+*   **Lifecycle Hooks:** Integrate custom logic at various stages of the validation process.
+
+This library is ideal for scenarios requiring dynamic validation, A/B testing logic, feature flagging, or any system where decisions are based on a set of defined criteria.
 
 ## ✨ Quick Start: Usage Example
 

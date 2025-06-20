@@ -121,28 +121,28 @@ func TestStepValueValidator(t *testing.T) {
 
 func TestNewStepValueValidator(t *testing.T) {
 	t.Run("valid rule", func(t *testing.T) {
-		rule := NewStepValueValidator(func() int { return 10 }, 5, 0)
+		rule := NewStepValueValidator(10, 5, 0)
 		if err := rule.Validate(context.Background()); err != nil {
 			t.Errorf("NewStepValueValidator() validation failed, error = %v", err)
 		}
 	})
 
 	t.Run("invalid rule", func(t *testing.T) {
-		rule := NewStepValueValidator(func() float64 { return 10.1 }, 5.0, 0.0)
+		rule := NewStepValueValidator(10.1, 5.0, 0.0)
 		if err := rule.Validate(context.Background()); err == nil {
 			t.Errorf("NewStepValueValidator() validation should have failed, but it didn't")
 		}
 	})
 
 	t.Run("rule with zero step", func(t *testing.T) {
-		rule := NewStepValueValidator(func() int { return 10 }, 0, 0)
+		rule := NewStepValueValidator(10, 0, 0)
 		if err := rule.Validate(context.Background()); err == nil {
 			t.Errorf("NewStepValueValidator() with zero step should have failed, but it didn't")
 		}
 	})
 
 	t.Run("rule name", func(t *testing.T) {
-		rule := NewStepValueValidator(func() int { return 10 }, 5, 0)
+		rule := NewStepValueValidator(10, 5, 0)
 		if rule.Name() != "step_value_validator" {
 			t.Errorf("NewStepValueValidator() rule name is incorrect, got %s, want %s", rule.Name(), "step_value_validator")
 		}
