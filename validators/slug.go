@@ -1,7 +1,6 @@
 package validators
 
 import (
-	"fmt"
 	"regexp"
 
 	"github.com/mishudark/rules"
@@ -12,41 +11,48 @@ var (
 	slugRegex = regexp.MustCompile(`^[-a-zA-Z0-9_]+$`)
 
 	// unicodeSlugRegex matches Unicode slugs: Unicode letters, Unicode numbers, underscores, hyphens.
-	// In Go, \w is ASCII-only ([0-9A-Za-z_]). For Unicode letters/numbers, use \p{L} and \p{N}.
 	unicodeSlugRegex = regexp.MustCompile(`^[-_\p{L}\p{N}]+$`)
 )
 
-// RuleValidSlug creates a validation Rule that checks if a given string is a valid slug.
+// RuleValidSlug creates a validation Rule that checks if a given string is a valid ASCII slug.
 // Slugs can consist of letters, numbers, underscores, or hyphens.
-// If allowUnicode is true, it permits Unicode letters and numbers; otherwise, only ASCII.
 // It considers an empty string as valid (use a separate 'Required' rule if needed).
-func RuleValidSlug(fieldName string, slug string, allowUnicode bool) rules.Rule {
-	ruleName := fmt.Sprintf("RuleValidSlug[%s, unicode=%t]", fieldName, allowUnicode)
-
-	return rules.NewRulePure(ruleName, func() error {
+func RuleValidSlug(fieldName string, slug string) rules.Rule {
+	return rules.NewRulePure("RuleValidSlug", func() error {
 		// Allow empty slugs by default, similar to how other rules handle empty strings.
 		// Add a separate "Required" rule if slugs cannot be empty.
 		if slug == "" {
 			return nil
 		}
 
-		var chosenRegex *regexp.Regexp
-		var message string
-
-		if allowUnicode {
-			chosenRegex = unicodeSlugRegex
-			message = "Slug must consist only of Unicode letters, numbers, underscores, or hyphens."
-		} else {
-			chosenRegex = slugRegex
-			message = "Slug must consist only of ASCII letters, numbers, underscores, or hyphens."
-		}
-
-		// Check if the slug matches the chosen pattern.
-		if !chosenRegex.MatchString(slug) {
+		if !slugRegex.MatchString(slug) {
 			return rules.Error{
 				Field: fieldName,
-				Err:   message,
+				Err:   "Slug must consist only of ASCII letters, numbers, underscores, or hyphens.",
 				Code:  "INVALID_SLUG",
+			}
+		}
+
+		return nil
+	})
+}
+
+// RuleValidUnicodeSlug creates a validation Rule that checks if a given string is a valid Unicode slug.
+// Slugs can consist of Unicode letters, Unicode numbers, underscores, or hyphens.
+// It considers an empty string as valid (use a separate 'Required' rule if needed).
+func RuleValidUnicodeSlug(fieldName string, slug string) rules.Rule {
+	return rules.NewRulePure("RuleValidUnicodeSlug", func() error {
+		// Allow empty slugs by default, similar to how other rules handle empty strings.
+		// Add a separate "Required" rule if slugs cannot be empty.
+		if slug == "" {
+			return nil
+		}
+
+		if !unicodeSlugRegex.MatchString(slug) {
+			return rules.Error{
+				Field: fieldName,
+				Err:   "Slug must consist only of Unicode letters, numbers, underscores, or hyphens.",
+				Code:  "INVALID_UNICODE_SLUG",
 			}
 		}
 
