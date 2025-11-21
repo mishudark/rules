@@ -30,6 +30,8 @@ type Condition interface {
 	Name() string
 	// Evaluate returns true if the condition is met, otherwise false.
 	IsValid(ctx context.Context) bool
+	// IsPure returns true if the condition is pure (no side effects).
+	IsPure() bool
 }
 
 // Rule represents a single unit of validation logic. It includes a Prepare
@@ -103,13 +105,34 @@ type ConditionNode struct {
 }
 
 // PrepareConditions prepares the ConditionNode by preparing its Condition.
+// PrepareConditions prepares the ConditionNode by preparing its Condition.
 func (n *ConditionNode) PrepareConditions(ctx context.Context) error {
 	if n.Condition == nil {
 		// Avoid nil pointer dereference if Condition func wasn't provided.
 		return nil
 	}
 
-	return n.Condition.Prepare(ctx)
+	// If the condition is pure, we can evaluate it immediately.
+	if n.Condition.IsPure() {
+		// If the condition is not valid, we can stop traversing this branch.
+		if !n.Condition.IsValid(ctx) {
+			return nil
+		}
+	}
+
+	err := n.Condition.Prepare(ctx)
+	if err != nil {
+		return err
+	}
+
+	for _, evaluable := range n.Evaluables {
+		err := evaluable.PrepareConditions(ctx)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // Evaluate implements the Evaluable interface for ConditionNode. It first checks
@@ -302,6 +325,13 @@ func (n *NotCondition) IsValid(ctx context.Context) bool {
 	return !n.condition.IsValid(ctx)
 }
 
+func (n *NotCondition) IsPure() bool {
+	if n.condition == nil {
+		return false
+	}
+	return n.condition.IsPure()
+}
+
 var _ Condition = (*NotCondition)(nil) // Ensure NotCondition implements the Condition interface.
 
 // Not is a helper function that takes a Condition and returns a Conditiona with
@@ -434,6 +464,10 @@ func (c *ConditionPure) Name() string {
 
 func (c *ConditionPure) IsValid(ctx context.Context) bool {
 	return c.condition()
+}
+
+func (c *ConditionPure) IsPure() bool {
+	return true
 }
 
 // NewConditionPure  function that creates and returns a new ConditionPure.
