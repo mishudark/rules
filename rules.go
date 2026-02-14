@@ -2,6 +2,7 @@ package rules
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -268,7 +269,7 @@ func (n *AnyOfNode) Evaluate(ctx context.Context, executionPath string) (bool, [
 
 var _ Evaluable = (*AnyOfNode)(nil) // Ensure AnyOfNode implements the Evaluable interface.
 
-// And is a constructor function that creates and returns a new AllOfNode
+// AllOf is a constructor function that creates and returns a new AllOfNode
 // containing the provided child Evaluables.
 func AllOf(children ...Evaluable) Evaluable {
 	return &AllOfNode{Children: children}
@@ -334,6 +335,107 @@ func (n *NotCondition) IsPure() bool {
 
 var _ Condition = (*NotCondition)(nil) // Ensure NotCondition implements the Condition interface.
 
+// ConditionEither represents a node in the validation evaluation tree that has an
+// associated Condition. If the Condition evaluates to true, ConditionEither
+// evaluates its left Evaluables and returns their rules. If the Condition
+// evaluates to false, it evaluates its right Evaluables instead.
+type ConditionEither struct {
+	Condition Condition   // The condition that determines which branch to evaluate.
+	Left      []Evaluable // The evaluables to use if condition is true.
+	Right     []Evaluable // The evaluables to use if condition is false.
+}
+
+// PrepareConditions prepares the ConditionEither by preparing its Condition.
+func (n *ConditionEither) PrepareConditions(ctx context.Context) error {
+	if n.Condition == nil {
+		return nil
+	}
+
+	// Determine which branch to prepare based on condition purity
+	if n.Condition.IsPure() {
+		var sideToValidate []Evaluable
+		if n.Condition.IsValid(ctx) {
+			sideToValidate = n.Left
+		} else {
+			sideToValidate = n.Right
+		}
+
+		for _, evaluable := range sideToValidate {
+			err := evaluable.PrepareConditions(ctx)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	// Prepare the condition
+	err := n.Condition.Prepare(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Non-pure condition: prepare both branches
+	for _, evaluable := range n.Left {
+		err := evaluable.PrepareConditions(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	for _, evaluable := range n.Right {
+		err := evaluable.PrepareConditions(ctx)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// Evaluate implements the Evaluable interface for ConditionEither. It checks
+// the Condition. If the Condition is true, it evaluates the left Evaluables.
+// If the Condition is false or nil, it evaluates the right Evaluables.
+func (n *ConditionEither) Evaluate(ctx context.Context, executionPath string) (bool, []Rule) {
+	var matchRules []Rule
+
+	if n.Condition != nil && n.Condition.IsValid(ctx) {
+		// Condition is true, evaluate left branch
+		for _, evaluable := range n.Left {
+			ok, rules := evaluable.Evaluate(ctx, fmt.Sprintf("%s -> %s (true)", executionPath, n.Condition.Name()))
+			if ok {
+				matchRules = append(matchRules, rules...)
+			}
+		}
+	} else {
+		// Condition is false or nil, evaluate right branch
+		for _, evaluable := range n.Right {
+			conditionName := "nil"
+			if n.Condition != nil {
+				conditionName = n.Condition.Name()
+			}
+			ok, rules := evaluable.Evaluate(ctx, fmt.Sprintf("%s -> %s (false)", executionPath, conditionName))
+			if ok {
+				matchRules = append(matchRules, rules...)
+			}
+		}
+	}
+
+	return len(matchRules) > 0, matchRules
+}
+
+var _ Evaluable = (*ConditionEither)(nil) // Ensure ConditionEither implements the Evaluable interface.
+
+// Either is a constructor function that creates and returns a new ConditionEither.
+// It associates a Condition with left and right Evaluables. If the condition is true,
+// the left Evaluables are evaluated; otherwise, the right Evaluables are evaluated.
+func Either(condition Condition, left, right []Evaluable) Evaluable {
+	return &ConditionEither{
+		Condition: condition,
+		Left:      left,
+		Right:     right,
+	}
+}
+
 // Not is a helper function that takes a Condition and returns a Conditiona with
 // the logical negation of the Condition's result.
 func Not(condition Condition) Condition {
@@ -351,11 +453,11 @@ func NopRule() error {
 	return nil
 }
 
-// ChainRules (assuming typo correction from ChinRules) represents a Rule that encapsulates
+// ChainRules  represents a Rule that encapsulates
 // a sequence of other Rules. When Prepare or Validate is called on ChainRules,
 // it executes the corresponding method on each child Rule in order, stopping
 // and returning the first encountered error. If all child rules succeed, it returns nil.
-type ChainRules struct { // Corrected typo from ChinRules
+type ChainRules struct {
 	Rules []Rule
 }
 
@@ -462,42 +564,42 @@ func (o *OrRules) Name() string {
 
 // Prepare implements the Rule interface for OrRules. It calls Prepare() on each
 // Rule. If any child Rule's Prepare() returns nil, it returns nil immediately.
+// If all rules fail, it returns all errors.
 func (o *OrRules) Prepare(ctx context.Context) error {
-	var lastErr error
 	if len(o.Rules) == 0 {
 		return nil
 	}
 
 	for _, rule := range o.Rules {
 		err := rule.Prepare(ctx)
+
 		if err != nil {
-			lastErr = err
-			break
+			return err
 		}
 	}
 
-	return lastErr
+	return nil
 }
 
 // Validate implements the Rule interface for OrRules. It calls Validate() on each
 // Rule. If any child Rule's Validate() returns nil, it returns nil immediately.
+// If all rules fail, it returns all errors.
 func (o *OrRules) Validate(ctx context.Context) error {
-	var lastErr error
+	var errs []error
 	if len(o.Rules) == 0 {
 		return nil
 	}
 
 	for _, rule := range o.Rules {
 		err := rule.Validate(ctx)
+		// If any rule succeeds, return nil immediately.
 		if err == nil {
 			return nil
 		}
-		lastErr = err
+		errs = append(errs, err)
 	}
-	if lastErr == nil {
-		return fmt.Errorf("all rules failed in OrRules.Validate")
-	}
-	return lastErr
+
+	return errors.Join(errs...)
 }
 
 // NewOrRules is a constructor function that creates and returns a new OrRules.
