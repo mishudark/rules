@@ -7,10 +7,10 @@ import (
 	"golang.org/x/exp/constraints"
 )
 
-// RuleMinValue creates a validation Rule that checks if a given numeric value
+// MinValue creates a validation Rule that checks if a given numeric value
 // is more than or equal to a specified minimum value.
 // It uses generics to work with any ordered type (int, float64, etc.).
-func RuleMinValue[T constraints.Ordered](fieldName string, value T, minValue T) rules.Rule {
+func MinValue[T constraints.Ordered](fieldName string, value T, minValue T) rules.Rule {
 	ruleName := fmt.Sprintf("RuleMinValue[%s]", fieldName)
 
 	return rules.NewRulePure(ruleName, func() error {
