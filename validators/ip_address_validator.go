@@ -16,8 +16,8 @@ func validateIPv4Address(value string) error {
 	return nil
 }
 
-// NewValidateIPv4Address returns a new rule that validates if a string is a valid IPv4 address.
-func NewValidateIPv4Address(value string) rules.Rule {
+// ValidateIPv4Address returns a new rule that validates if a string is a valid IPv4 address.
+func ValidateIPv4Address(value string) rules.Rule {
 	return rules.NewRulePure("validate_ipv4_address", func() error {
 		return validateIPv4Address(value)
 	})
@@ -32,8 +32,8 @@ func validateIPv6Address(value string) error {
 	return nil
 }
 
-// NewValidateIPv6Address returns a new rule that validates if a string is a valid IPv6 address.
-func NewValidateIPv6Address(value string) rules.Rule {
+// ValidateIPv6Address returns a new rule that validates if a string is a valid IPv6 address.
+func ValidateIPv6Address(value string) rules.Rule {
 	return rules.NewRulePure("validate_ipv6_address", func() error {
 		return validateIPv6Address(value)
 	})
@@ -47,8 +47,8 @@ func validateIPv46Address(value string) error {
 	return nil
 }
 
-// NewValidateIPv46Address returns a new rule that validates if a string is a valid IPv4 or IPv6 address.
-func NewValidateIPv46Address(value string) rules.Rule {
+// ValidateIPv46Address returns a new rule that validates if a string is a valid IPv4 or IPv6 address.
+func ValidateIPv46Address(value string) rules.Rule {
 	return rules.NewRulePure("validate_ipv46_address", func() error {
 		return validateIPv46Address(value)
 	})

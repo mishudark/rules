@@ -14,10 +14,10 @@ type number interface {
 		~float32 | ~float64
 }
 
-// StepValueValidator validates that a value is a multiple of a given step.
+// stepValueValidator validates that a value is a multiple of a given step.
 // An offset can be provided to shift the validation.
 // It uses a small tolerance for floating-point comparisons.
-func StepValueValidator[T number](value, step, offset T) error {
+func stepValueValidator[T number](value, step, offset T) error {
 	if step == 0 {
 		return fmt.Errorf("step cannot be zero")
 	}
@@ -37,9 +37,9 @@ func StepValueValidator[T number](value, step, offset T) error {
 	return nil
 }
 
-// NewStepValueValidator returns a new Rule that validates if a number is a multiple of a given step.
-func NewStepValueValidator[T number](value T, step, offset T) rules.Rule {
+// NewStepValue returns a new Rule that validates if a number is a multiple of a given step.
+func StepValue[T number](value T, step, offset T) rules.Rule {
 	return rules.NewRulePure("step_value_validator", func() error {
-		return StepValueValidator(value, step, offset)
+		return stepValueValidator(value, step, offset)
 	})
 }

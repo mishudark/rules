@@ -61,7 +61,7 @@ func TestURLValidator(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := URLValidator(tc.value, tc.schemes)
+			err := urlValidator(tc.value, tc.schemes)
 			if (err != nil) != tc.wantErr {
 				t.Errorf("URLValidator() error = %v, wantErr %v", err, tc.wantErr)
 			}

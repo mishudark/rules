@@ -111,7 +111,7 @@ func TestStepValueValidator(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := StepValueValidator(tc.value, tc.step, tc.offset)
+			err := stepValueValidator(tc.value, tc.step, tc.offset)
 			if (err != nil) != tc.wantErr {
 				t.Errorf("StepValueValidator() error = %v, wantErr %v", err, tc.wantErr)
 			}
@@ -119,32 +119,32 @@ func TestStepValueValidator(t *testing.T) {
 	}
 }
 
-func TestNewStepValueValidator(t *testing.T) {
+func TestStepValue(t *testing.T) {
 	t.Run("valid rule", func(t *testing.T) {
-		rule := NewStepValueValidator(10, 5, 0)
+		rule := StepValue(10, 5, 0)
 		if err := rule.Validate(context.Background()); err != nil {
-			t.Errorf("NewStepValueValidator() validation failed, error = %v", err)
+			t.Errorf("StepValue() validation failed, error = %v", err)
 		}
 	})
 
 	t.Run("invalid rule", func(t *testing.T) {
-		rule := NewStepValueValidator(10.1, 5.0, 0.0)
+		rule := StepValue(10.1, 5.0, 0.0)
 		if err := rule.Validate(context.Background()); err == nil {
-			t.Errorf("NewStepValueValidator() validation should have failed, but it didn't")
+			t.Errorf("StepValue() validation should have failed, but it didn't")
 		}
 	})
 
 	t.Run("rule with zero step", func(t *testing.T) {
-		rule := NewStepValueValidator(10, 0, 0)
+		rule := StepValue(10, 0, 0)
 		if err := rule.Validate(context.Background()); err == nil {
-			t.Errorf("NewStepValueValidator() with zero step should have failed, but it didn't")
+			t.Errorf("StepValue() with zero step should have failed, but it didn't")
 		}
 	})
 
 	t.Run("rule name", func(t *testing.T) {
-		rule := NewStepValueValidator(10, 5, 0)
+		rule := StepValue(10, 5, 0)
 		if rule.Name() != "step_value_validator" {
-			t.Errorf("NewStepValueValidator() rule name is incorrect, got %s, want %s", rule.Name(), "step_value_validator")
+			t.Errorf("StepValue() rule name is incorrect, got %s, want %s", rule.Name(), "step_value_validator")
 		}
 	})
 }

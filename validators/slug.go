@@ -14,10 +14,10 @@ var (
 	unicodeSlugRegex = regexp.MustCompile(`^[-_\p{L}\p{N}]+$`)
 )
 
-// RuleValidSlug creates a validation Rule that checks if a given string is a valid ASCII slug.
+// Slug creates a validation Rule that checks if a given string is a valid ASCII slug.
 // Slugs can consist of letters, numbers, underscores, or hyphens.
 // It considers an empty string as valid (use a separate 'Required' rule if needed).
-func RuleValidSlug(fieldName string, slug string) rules.Rule {
+func Slug(fieldName string, slug string) rules.Rule {
 	return rules.NewRulePure("RuleValidSlug", func() error {
 		// Allow empty slugs by default, similar to how other rules handle empty strings.
 		// Add a separate "Required" rule if slugs cannot be empty.
@@ -37,10 +37,10 @@ func RuleValidSlug(fieldName string, slug string) rules.Rule {
 	})
 }
 
-// RuleValidUnicodeSlug creates a validation Rule that checks if a given string is a valid Unicode slug.
+// UnicodeSlug creates a validation Rule that checks if a given string is a valid Unicode slug.
 // Slugs can consist of Unicode letters, Unicode numbers, underscores, or hyphens.
 // It considers an empty string as valid (use a separate 'Required' rule if needed).
-func RuleValidUnicodeSlug(fieldName string, slug string) rules.Rule {
+func UnicodeSlug(fieldName string, slug string) rules.Rule {
 	return rules.NewRulePure("RuleValidUnicodeSlug", func() error {
 		// Allow empty slugs by default, similar to how other rules handle empty strings.
 		// Add a separate "Required" rule if slugs cannot be empty.
@@ -59,3 +59,4 @@ func RuleValidUnicodeSlug(fieldName string, slug string) rules.Rule {
 		return nil
 	})
 }
+

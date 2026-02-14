@@ -47,7 +47,7 @@ func TestRuleValidDomainNameAdvanced(t *testing.T) {
 		// Use t.Run to create a subtest for each case
 		t.Run(tc.testName, func(t *testing.T) {
 			// Create the rule instance for this test case
-			rule := RuleValidDomainNameAdvanced(tc.testName, tc.domain, tc.acceptIdna)
+			rule := ValidDomainNameAdvanced(tc.testName, tc.domain, tc.acceptIdna)
 
 			// Execute the validation logic
 			// Prepare is no-op for RulePure, so we directly call Validate

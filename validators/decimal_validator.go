@@ -7,8 +7,8 @@ import (
 	"github.com/mishudark/rules"
 )
 
-// DecimalValidator validates a decimal number string against max_digits and decimal_places.
-func DecimalValidator(value string, maxDigits, decimalPlaces int) error {
+// decimalValidator validates a decimal number string against max_digits and decimal_places.
+func decimalValidator(value string, maxDigits, decimalPlaces int) error {
 	if value == "" {
 		return fmt.Errorf("value cannot be empty")
 	}
@@ -45,10 +45,10 @@ func DecimalValidator(value string, maxDigits, decimalPlaces int) error {
 	return nil
 }
 
-// NewDecimalValidator returns a new Rule that validates if a string is a valid decimal number
+// DecimalValidator returns a new Rule that validates if a string is a valid decimal number
 // with the given constraints.
-func NewDecimalValidator(value string, maxDigits, decimalPlaces int) rules.Rule {
+func DecimalValidator(value string, maxDigits, decimalPlaces int) rules.Rule {
 	return rules.NewRulePure("decimal_validator", func() error {
-		return DecimalValidator(value, maxDigits, decimalPlaces)
+		return decimalValidator(value, maxDigits, decimalPlaces)
 	})
 }

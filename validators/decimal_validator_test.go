@@ -70,7 +70,7 @@ func TestDecimalValidator(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := DecimalValidator(tc.value, tc.maxDigits, tc.decimalPlaces)
+			err := decimalValidator(tc.value, tc.maxDigits, tc.decimalPlaces)
 			if (err != nil) != tc.wantErr {
 				t.Errorf("DecimalValidator() error = %v, wantErr %v", err, tc.wantErr)
 			}

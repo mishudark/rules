@@ -24,7 +24,7 @@ tree := rules.Node(
     rules.NewConditionPure("fromUSA", func() bool {
         return user.Country == "USA"
     }),
-    rules.Rules(validators.RuleMinValue("age", user.Age, 21)),
+    rules.Rules(validators.MinValue("age", user.Age, 21)),
 )
 
 err := rules.Validate(context.Background(), tree, rules.ProcessingHooks{}, "check")
@@ -37,9 +37,9 @@ Pass multiple rules to `Rules()` — all of them must pass:
 
 ```go
 tree := rules.Rules(
-    validators.RuleMinValue("age", 25, 18),
-    validators.RuleMaxValue("age", 25, 65),
-    validators.RuleValidEmail("email", "user@example.com", nil),
+    validators.MinValue("age", 25, 18),
+    validators.MaxValue("age", 25, 65),
+    validators.Email("email", "user@example.com", nil),
 )
 ```
 
@@ -50,8 +50,8 @@ Use `Or()` when at least one rule should pass:
 ```go
 tree := rules.Rules(
     rules.Or(
-        validators.RuleValidEmail("contact", "user@example.com", nil),
-        validators.RuleValidDomainNameAdvanced("contact", "example.com", false),
+        validators.Email("contact", "user@example.com", nil),
+        validators.ValidDomainNameAdvanced("contact", "example.com", false),
     ),
 )
 ```
@@ -66,11 +66,11 @@ tree := rules.Either(
     rules.NewConditionPure("isPremium", func() bool { return user.Plan == "premium" }),
     // Left branch (condition is true): premium rules
     rules.Rules(
-        validators.RuleMinValue("age", user.Age, 18),
-        validators.URLValidator(user.Website, []string{"https"}),
+        validators.MinValue("age", user.Age, 18),
+        validators.URL(user.Website, []string{"https"}),
     ),
     // Right branch (condition is false): free user rules
-    rules.Rules(validators.RuleMinValue("age", user.Age, 13)),
+    rules.Rules(validators.MinValue("age", user.Age, 13)),
 )
 ```
 
@@ -84,13 +84,13 @@ tree := rules.Root(
     rules.Node(
         rules.NewConditionPure("isPremium", func() bool { return user.IsPremium }),
         // THEN require email verification
-        rules.Rules(validators.RuleValidEmail("email", user.Email, nil)),
+        rules.Rules(validators.Email("email", user.Email, nil)),
     ),
     // IF user is NOT premium
     rules.Node(
         rules.NewConditionPure("isNotPremium", func() bool { return !user.IsPremium }),
         // THEN just check minimum age
-        rules.Rules(validators.RuleMinValue("age", user.Age, 13)),
+        rules.Rules(validators.MinValue("age", user.Age, 13)),
     ),
 )
 ```
@@ -99,14 +99,14 @@ tree := rules.Root(
 
 ```go
 tree := rules.Root(
-    rules.Rules(validators.RuleValidEmail("email", user.Email, nil)),
+    rules.Rules(validators.Email("email", user.Email, nil)),
     
     // Premium users: age 18+ AND valid website
     rules.Node(
         rules.NewConditionPure("isPremium", func() bool { return user.Plan == "premium" }),
         rules.Rules(
-            validators.RuleMinValue("age", user.Age, 18),
-            validators.URLValidator(user.Website, []string{"https"}),
+            validators.MinValue("age", user.Age, 18),
+            validators.URL(user.Website, []string{"https"}),
         ),
     ),
     
@@ -114,8 +114,8 @@ tree := rules.Root(
     rules.Node(
         rules.NewConditionPure("isFree", func() bool { return user.Plan == "free" }),
         rules.Rules(
-            validators.RuleMinValue("age", user.Age, 13),
-            validators.RuleValidDomainNameAdvanced("country", user.Country, false),
+            validators.MinValue("age", user.Age, 13),
+            validators.ValidDomainNameAdvanced("country", user.Country, false),
         ),
     ),
 )
@@ -129,19 +129,19 @@ Here's what you can validate out of the box:
 
 | Validator | Use for |
 |-----------|---------|
-| `RuleMinValue` / `RuleMaxValue` | Numbers (age, price, quantity) |
-| `RuleValidEmail` | Email addresses |
-| `URLValidator` | URLs with optional scheme restrictions |
-| `RuleValidDomainNameAdvanced` | Domain names |
+| `MinValue` / `MaxValue` | Numbers (age, price, quantity) |
+| `Email` | Email addresses |
+| `URL` | URLs with optional scheme restrictions |
+| `ValidDomainNameAdvanced` | Domain names |
 | `MinLengthString` / `MaxLengthString` | String sizes |
 | `MinLengthSlice` / `MaxLengthSlice` | Array sizes |
-| `NewFileExtensionValidator` | File types by extension |
-| `NewValidateIPv4Address` / `NewValidateIPv6Address` | IP addresses |
-| `NewDecimalValidator` | Decimal numbers with precision control |
-| `NewValidateCommaSeparatedIntegerList` | Comma-separated numbers |
-| `NewProhibitNullCharactersValidator` | Strings without null chars |
-| `NewSlugValidator` | URL-friendly slugs |
-| `NewStepValueValidator` | Values in increments |
+| `FileExtensionValidator` | File types by extension |
+| `ValidateIPv4Address` / `ValidateIPv6Address` | IP addresses |
+| `DecimalValidator` | Decimal numbers with precision control |
+| `CommaSeparatedIntegerList` | Comma-separated numbers |
+| `ProhibitNullCharacters` | Strings without null chars |
+| `Slug` | URL-friendly slugs |
+| `StepValue` | Values in increments |
 
 ---
 
@@ -169,27 +169,27 @@ type RegistrationRequest struct {
 func ValidateRegistration(ctx context.Context, req RegistrationRequest) error {
     tree := rules.Root(
         // Email is always required
-        rules.Rules(validators.RuleValidEmail("email", req.Email, nil)),
+        rules.Rules(validators.Email("email", req.Email, nil)),
         
         // Age check for everyone
-        rules.Rules(validators.RuleMinValue("age", req.Age, 13)),
+        rules.Rules(validators.MinValue("age", req.Age, 13)),
         
         // Premium users need a valid website
         rules.Node(
             rules.NewConditionPure("isPremium", func() bool { return req.Plan == "premium" }),
-            rules.Rules(validators.URLValidator(req.Website, []string{"https"})),
+            rules.Rules(validators.URL(req.Website, []string{"https"})),
         ),
         
         // US users need 18+, others need 21+
         rules.Node(
             rules.NewConditionPure("isUS", func() bool { return req.Country == "US" }),
-            rules.Rules(validators.RuleMinValue("age", req.Age, 18)),
+            rules.Rules(validators.MinValue("age", req.Age, 18)),
         ),
         
         // Non-US users need 21+ (only runs if isUS is false)
         rules.Node(
             rules.NewConditionPure("isNotUS", func() bool { return req.Country != "US" }),
-            rules.Rules(validators.RuleMinValue("age", req.Age, 21)),
+            rules.Rules(validators.MinValue("age", req.Age, 21)),
         ),
     )
     
@@ -282,3 +282,5 @@ type Error struct {
 ```bash
 go get github.com/mishudark/rules
 ```
+
+
