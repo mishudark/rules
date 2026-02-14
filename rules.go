@@ -447,11 +447,23 @@ func Not(condition Condition) Condition {
 // NopRule is intended as a placeholder or no-operation function within validation logic.
 // It returns nil, signifying success without performing any action. It can be useful
 // in conditional logic where one branch requires no validation or during testing.
-// Note: This function itself does not implement the Rule interface. It returns the
-// error expected from Rule's Prepare or Validate methods.
-func NopRule() error {
+type NopRule struct {
+	RuleBase
+}
+
+func (n *NopRule) Name() string {
+	return "nopRule"
+}
+
+func (n *NopRule) Prepare(ctx context.Context) error {
 	return nil
 }
+
+func (n *NopRule) Validate(ctx context.Context) error {
+	return nil
+}
+
+var _ Rule = (*NopRule)(nil) // Ensure NopRule implements the Rule interface.
 
 // ChainRules  represents a Rule that encapsulates
 // a sequence of other Rules. When Prepare or Validate is called on ChainRules,
@@ -602,10 +614,10 @@ func (o *OrRules) Validate(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// NewOrRules is a constructor function that creates and returns a new OrRules.
-func NewOrRules(rules ...Rule) Rule {
+// Or is a constructor function that creates and returns a new OrRules.
+func Or(rule Rule, rules ...Rule) Rule {
 	return &OrRules{
-		Rules: rules,
+		Rules: append([]Rule{rule}, rules...),
 	}
 }
 

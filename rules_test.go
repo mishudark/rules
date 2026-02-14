@@ -213,7 +213,11 @@ func TestOrRules(t *testing.T) {
 	for _, tc := range tt {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			or := NewOrRules(tc.rules...)
+			if len(tc.rules) == 0 {
+				t.Fatal("test case must have at least one rule")
+			}
+
+			or := Or(tc.rules[0], tc.rules[1:]...)
 			err := or.Validate(ctx)
 			if (err != nil) != tc.wantErr {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tc.wantErr)
