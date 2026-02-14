@@ -689,3 +689,209 @@ func NewConditionSideEffect(name string, prepare func(ctx context.Context) error
 		condition: condition,
 	}
 }
+
+// RuleDataFunc is a rule that receives data from context as any (interface{}).
+// This enables reusable rule trees where data is bound at validation time, not construction time.
+type RuleDataFunc struct {
+	RuleBase
+	name string
+	fn   func(ctx context.Context, data any) error
+}
+
+var _ Rule = (*RuleDataFunc)(nil)
+
+// Name returns the rule name.
+func (r *RuleDataFunc) Name() string {
+	return r.name
+}
+
+// Prepare implements Rule interface. It's a no-op for pure rules.
+func (r *RuleDataFunc) Prepare(ctx context.Context) error {
+	return nil
+}
+
+// Validate retrieves data from context and calls the wrapped function.
+func (r *RuleDataFunc) Validate(ctx context.Context) error {
+	data, ok := Get(ctx)
+	if !ok {
+		return Error{
+			Field: r.name,
+			Err:   "validation data not found in context",
+			Code:  "DATA_NOT_FOUND",
+		}
+	}
+	return r.fn(ctx, data)
+}
+
+// NewRule creates a rule that receives data from context.
+// This is the primary way to create reusable rules that work with the data registry pattern.
+//
+// Example:
+//
+//	rule := rules.NewRule("checkEmail", func(ctx context.Context, data any) error {
+//	    user := data.(User)
+//	    if !strings.Contains(user.Email, "@") {
+//	        return fmt.Errorf("invalid email")
+//	    }
+//	    return nil
+//	})
+func NewRule(name string, fn func(ctx context.Context, data any) error) Rule {
+	return &RuleDataFunc{
+		name: name,
+		fn:   fn,
+	}
+}
+
+// NewTypedRule creates a type-safe rule that automatically casts data to type T.
+// Returns an error if the data cannot be cast to T.
+//
+// Example:
+//
+//	rule := rules.NewTypedRule[User]("checkAge", func(ctx context.Context, user User) error {
+//	    if user.Age < 18 {
+//	        return fmt.Errorf("must be 18 or older")
+//	    }
+//	    return nil
+//	})
+func NewTypedRule[T any](name string, fn func(ctx context.Context, data T) error) Rule {
+	return &RuleDataFunc{
+		name: name,
+		fn: func(ctx context.Context, data any) error {
+			typed, ok := data.(T)
+			if !ok {
+				var zero T
+				return Error{
+					Field: name,
+					Err:   fmt.Sprintf("expected data of type %T, got %T", zero, data),
+					Code:  "TYPE_MISMATCH",
+				}
+			}
+			return fn(ctx, typed)
+		},
+	}
+}
+
+// NewTypedCondition creates a type-safe condition that automatically casts data to type T.
+// Returns false if the data cannot be cast to T.
+//
+// Example:
+//
+//	condition := rules.NewTypedCondition[User]("isAdult", func(ctx context.Context, user User) bool {
+//	    return user.Age >= 18
+//	})
+func NewTypedCondition[T any](name string, fn func(ctx context.Context, data T) bool) Condition {
+	return &ConditionFunc{
+		name: name,
+		predicate: func(ctx context.Context) bool {
+			data, ok := Get(ctx)
+			if !ok {
+				return false
+			}
+			typed, ok := data.(T)
+			if !ok {
+				return false
+			}
+			return fn(ctx, typed)
+		},
+		pure: true,
+	}
+}
+
+// TypedRuleDataFunc is a rule with Prepare support and type-safe data access.
+// This allows rules to have side effects (e.g., fetching data) before validation.
+type TypedRuleDataFunc[T any] struct {
+	RuleBase
+	name    string
+	prepare func(ctx context.Context, data T) error
+	fn      func(ctx context.Context, data T) error
+}
+
+var _ Rule = (*TypedRuleDataFunc[any])(nil)
+
+// Name returns the rule name.
+func (r *TypedRuleDataFunc[T]) Name() string {
+	return r.name
+}
+
+// Prepare executes the prepare function with typed data.
+func (r *TypedRuleDataFunc[T]) Prepare(ctx context.Context) error {
+	data, ok := Get(ctx)
+	if !ok {
+		return Error{
+			Field: r.name,
+			Err:   "validation data not found in context",
+			Code:  "DATA_NOT_FOUND",
+		}
+	}
+	typed, ok := data.(T)
+	if !ok {
+		var zero T
+		return Error{
+			Field: r.name,
+			Err:   fmt.Sprintf("expected data of type %T, got %T", zero, data),
+			Code:  "TYPE_MISMATCH",
+		}
+	}
+	if r.prepare != nil {
+		return r.prepare(ctx, typed)
+	}
+	return nil
+}
+
+// Validate executes the validation function with typed data.
+func (r *TypedRuleDataFunc[T]) Validate(ctx context.Context) error {
+	data, ok := Get(ctx)
+	if !ok {
+		return Error{
+			Field: r.name,
+			Err:   "validation data not found in context",
+			Code:  "DATA_NOT_FOUND",
+		}
+	}
+	typed, ok := data.(T)
+	if !ok {
+		var zero T
+		return Error{
+			Field: r.name,
+			Err:   fmt.Sprintf("expected data of type %T, got %T", zero, data),
+			Code:  "TYPE_MISMATCH",
+		}
+	}
+	return r.fn(ctx, typed)
+}
+
+// NewTypedRuleWithPrepare creates a type-safe rule with Prepare support.
+// This is useful when you need to fetch additional data or perform side effects
+// before validation (e.g., checking a database, calling an API).
+//
+// Example:
+//
+//	rule := rules.NewTypedRuleWithPrepare[User](
+//	    "checkEmailUniqueness",
+//	    func(ctx context.Context, user User) error {
+//	        // Side effect: check database
+//	        exists, err := db.CheckEmailExists(ctx, user.Email)
+//	        if err != nil {
+//	            return err
+//	        }
+//	        if exists {
+//	            return fmt.Errorf("email already exists")
+//	        }
+//	        return nil
+//	    },
+//	    nil, // No additional validation needed after prepare
+//	)
+func NewTypedRuleWithPrepare[T any](
+	name string,
+	prepare func(ctx context.Context, data T) error,
+	validate func(ctx context.Context, data T) error,
+) Rule {
+	if validate == nil {
+		validate = func(ctx context.Context, data T) error { return nil }
+	}
+	return &TypedRuleDataFunc[T]{
+		name:    name,
+		prepare: prepare,
+		fn:      validate,
+	}
+}

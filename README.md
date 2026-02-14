@@ -8,12 +8,13 @@ A flexible validation library that lets you build complex rules as a tree struct
 - **A/B testing** — route users to different experiences
 - **Form validation** — validate complex forms with conditions
 - **Business rules** — implement decision trees that non-developers can visualize
+- **Reusable validation** — build rule trees once, validate against different data
 
 ---
 
 ## Quick Examples
 
-### Simple validation
+### Simple validation (closure-based - data bound at construction)
 
 Validate that a user is over 21 and from the USA:
 
@@ -30,6 +31,130 @@ tree := rules.Node(
 err := rules.Validate(context.Background(), tree, rules.ProcessingHooks{}, "check")
 // err == nil
 ```
+
+### Reusable validation (data registry pattern - data bound at validation time)
+
+Build the tree once, reuse it with different data:
+
+```go
+// Build tree once (can be done at init or in a separate package)
+tree := rules.Node(
+    rules.IsA[User]("isUser"),  // Runtime type check
+    rules.Rules(
+        rules.NewTypedRule[User]("checkAge", func(ctx context.Context, user User) error {
+            if user.Age < 21 {
+                return fmt.Errorf("must be 21 or older")
+            }
+            return nil
+        }),
+    ),
+)
+
+// Reuse tree with different users
+for _, user := range users {
+    err := rules.ValidateWithData(ctx, tree, hooks, "ageCheck", user)
+}
+```
+
+---
+
+## Reusable Trees (Data Registry Pattern)
+
+This is the **recommended pattern** for most use cases. Build validation trees once, reuse them across many data instances.
+
+### Why use reusable trees?
+
+| Aspect | Closure-Based | Data Registry |
+|--------|--------------|---------------|
+| Tree reuse | Build per validation | Build once, reuse many |
+| Performance | Slower (allocation per request) | Fast (shared tree) |
+| Testability | Harder (data bound at construction) | Easier (inject data at validation) |
+| Cross-package | Complex | Natural |
+
+### How it works
+
+1. **Build the tree** at startup or in a separate package using typed rules/conditions
+2. **Store data** in the context using `DataRegistry` at validation time
+3. **Access data** in rules/conditions via `Get` or `GetAs[T]`
+
+```go
+// Step 1: Build tree once (can be in a separate package)
+var userValidationTree = rules.Node(
+    rules.IsA[User]("isUser"),
+    rules.Rules(
+        rules.NewTypedRule[User]("checkAge", func(ctx context.Context, u User) error {
+            if u.Age < 18 {
+                return fmt.Errorf("must be 18 or older")
+            }
+            return nil
+        }),
+        rules.NewTypedRule[User]("checkEmail", func(ctx context.Context, u User) error {
+            if !strings.Contains(u.Email, "@") {
+                return fmt.Errorf("invalid email")
+            }
+            return nil
+        }),
+    ),
+)
+
+// Step 2: Reuse for many users
+func ProcessUsers(users []User) []error {
+    hooks := rules.ProcessingHooks{}
+    errs := make([]error, len(users))
+    
+    for i, user := range users {
+        // Data is bound at validation time, not construction
+        err := rules.ValidateWithData(ctx, userValidationTree, hooks, "validate", user)
+        errs[i] = err
+    }
+    return errs
+}
+```
+
+### Type switching in reusable trees
+
+Merge trees for different types and let runtime type checks route to the right rules:
+
+```go
+// Build merged tree for multiple types
+var mergedTree = rules.Root(
+    rules.Node(
+        rules.IsA[User]("isUser"),
+        rules.Rules(userRules...),
+    ),
+    rules.Node(
+        rules.IsA[Product]("isProduct"),
+        rules.Rules(productRules...),
+    ),
+    rules.Node(
+        rules.IsA[Order]("isOrder"),
+        rules.Rules(orderRules...),
+    ),
+)
+
+// Works with any of the registered types
+rules.ValidateWithData(ctx, mergedTree, hooks, "validate", user)
+rules.ValidateWithData(ctx, mergedTree, hooks, "validate", product)
+rules.ValidateWithData(ctx, mergedTree, hooks, "validate", order)
+```
+
+### Manual registry usage
+
+For more control over context creation:
+
+```go
+// Create registry and attach to context
+reg := rules.NewDataRegistry(user)
+ctx := rules.WithRegistry(context.Background(), reg)
+
+// Use standard Validate (requires registry in context)
+err := rules.Validate(ctx, tree, hooks, "validate")
+
+// Or access data directly in custom rules/conditions
+user, ok := rules.GetAs[User](ctx)
+```
+
+---
 
 ### Multiple rules (all must pass)
 
@@ -72,6 +197,54 @@ tree := rules.Either(
     // Right branch (condition is false): free user rules
     rules.Rules(validators.MinValue("age", user.Age, 13)),
 )
+```
+
+### Cross-package tree composition with type switching
+
+Build rules in separate packages and merge them at runtime:
+
+```go
+// package userrules/user_rules.go
+type User struct { Name string; Age int }
+
+func UserRules() rules.Evaluable {
+    return rules.Node(
+        rules.IsA[User]("isUser"),
+        rules.Rules(
+            rules.NewTypedRule[User]("checkAge", func(ctx context.Context, u User) error {
+                if u.Age < 18 { return fmt.Errorf("too young") }
+                return nil
+            }),
+        ),
+    )
+}
+
+// package productrules/product_rules.go
+type Product struct { Name string; Price float64 }
+
+func ProductRules() rules.Evaluable {
+    return rules.Node(
+        rules.IsA[Product]("isProduct"),
+        rules.Rules(
+            rules.NewTypedRule[Product]("checkPrice", func(ctx context.Context, p Product) error {
+                if p.Price <= 0 { return fmt.Errorf("invalid price") }
+                return nil
+            }),
+        ),
+    )
+}
+
+// main.go - merge and use
+func main() {
+    mergedTree := rules.Root(
+        userrules.UserRules(),
+        productrules.ProductRules(),
+    )
+    
+    // Works with both User and Product!
+    rules.ValidateWithData(ctx, mergedTree, hooks, "validate", user)
+    rules.ValidateWithData(ctx, mergedTree, hooks, "validate", product)
+}
 ```
 
 ### Nested logic
@@ -123,6 +296,54 @@ tree := rules.Root(
 
 ---
 
+## Runtime Type Conditions
+
+Use these conditions for type switching in merged trees:
+
+```go
+rules.IsA[User]("isUser")                    // Exact type match
+rules.IsAssignableTo[Named]("isNamed")       // Interface implementation
+rules.IsNil("isNil")                         // Nil check
+rules.IsNotNil("hasData")                    // Non-nil check
+```
+
+### Data-Driven Conditions
+
+```go
+condition := rules.NewCondition("isAdult", func(ctx context.Context) bool {
+    user, ok := rules.GetAs[User](ctx)
+    if !ok {
+        return false
+    }
+    return user.Age >= 18
+})
+```
+
+---
+
+## Schema Validation
+
+Validate struct fields using path-based validators:
+
+```go
+type User struct {
+    Name  string
+    Email string
+    Age   int
+}
+
+rule := validators.Schema("validateUser", []validators.FieldValidator{
+    validators.RequiredField("Name"),
+    validators.MinLengthField("Email", 5),
+    validators.EmailField("Email", nil),
+    validators.MinValueField[int]("Age", 18),
+})
+
+err := rules.ValidateWithData(ctx, rules.Rules(rule), hooks, "validate", user)
+```
+
+---
+
 ## Common Validators
 
 Here's what you can validate out of the box:
@@ -142,6 +363,11 @@ Here's what you can validate out of the box:
 | `ProhibitNullCharacters` | Strings without null chars |
 | `Slug` | URL-friendly slugs |
 | `StepValue` | Values in increments |
+| `Schema` | Struct field validation (with data registry) |
+| `RequiredField` | Required field validation |
+| `MinValueField` / `MaxValueField` | Numeric field validation |
+| `MinLengthField` / `MaxLengthField` | Length field validation |
+| `EmailField` | Email field validation |
 
 ---
 
@@ -233,21 +459,42 @@ func main() {
 | `rules.Rules(rules...)` | Leaf node — all rules must pass |
 | `rules.Or(rules...)` | Passes if at least one rule passes |
 
-### Main Function
+### Data Registry Functions
+
+| Function | What it does |
+|----------|--------------|
+| `rules.NewDataRegistry(data)` | Creates a registry with validation data |
+| `rules.WithRegistry(ctx, reg)` | Attaches registry to context |
+| `rules.ValidateWithData(ctx, tree, hooks, name, data)` | Validates with data (convenience) |
+| `rules.Get(ctx)` | Gets raw data from context |
+| `rules.GetAs[T](ctx)` | Gets typed data from context |
+| `rules.MustGet(ctx)` | Gets data, panics if not found |
+| `rules.MustGetAs[T](ctx)` | Gets typed data, panics if not found |
+| `rules.NewRule(name, fn)` | Creates a rule with `any` data parameter (pure) |
+| `rules.NewTypedRule[T](name, fn)` | Creates a type-safe rule (pure) |
+| `rules.NewTypedRuleWithPrepare[T](name, prepare, validate)` | Creates a type-safe rule with Prepare (impure) |
+| `rules.NewCondition(name, fn)` | Creates a data-driven condition (pure) |
+| `rules.NewTypedCondition[T](name, fn)` | Creates a type-safe condition (pure) |
+| `rules.NewTypedConditionWithPrepare[In, T](name, prepare, condition)` | Creates a type-safe condition with Prepare (impure) |
+| `rules.NewConditionImpure(name, fn)` | Creates a condition with side effects (impure) |
+
+### Runtime Type Conditions
+
+| Function | What it does |
+|----------|--------------|
+| `rules.IsA[T]("name")` | True if data is exactly type T (uses reflection, ~6ns) |
+| `rules.FastIsA("name", prototype)` | Same as IsA but with explicit prototype (same speed) |
+| `rules.FastTypeSwitch("name", fn)` | Type check using type switch (flexible, fast) |
+| `rules.IsAssignableTo[T]("name")` | True if data can be assigned to T |
+| `rules.IsNil("name")` | True if data is nil |
+| `rules.IsNotNil("name")` | True if data is not nil |
+
+### Creating Custom Rules (Data Registry)
+
+**Basic rule with any data:**
 
 ```go
-err := rules.Validate(ctx, tree, hooks, "validationName")
-```
-
-- `ctx` — Context for timeouts/cancellation
-- `tree` — Your rule tree (any `Evaluable`)
-- `hooks` — Optional hooks structure for processing
-- `validationName` — Name for error reporting
-
-### Creating Custom Rules
-
-```go
-myRule := rules.NewRulePure("myRule", func(ctx context.Context, data any) error {
+myRule := rules.NewRule("myRule", func(ctx context.Context, data any) error {
     user := data.(User)
     if user.Disabled {
         return fmt.Errorf("user is disabled")
@@ -256,7 +503,97 @@ myRule := rules.NewRulePure("myRule", func(ctx context.Context, data any) error 
 })
 ```
 
-### Creating Custom Conditions
+**Type-safe rule:**
+
+```go
+myRule := rules.NewTypedRule[User]("myRule", func(ctx context.Context, user User) error {
+    if user.Disabled {
+        return fmt.Errorf("user is disabled")
+    }
+    return nil
+})
+```
+
+**Type-safe rule with Prepare (non-pure):**
+
+Use this when you need side effects before validation (e.g., database checks, API calls):
+
+```go
+myRule := rules.NewTypedRuleWithPrepare[User](
+    "checkEmailUnique",
+    func(ctx context.Context, user User) error {
+        // Prepare: Check database for existing email
+        exists, err := db.EmailExists(ctx, user.Email)
+        if err != nil {
+            return err
+        }
+        if exists {
+            return fmt.Errorf("email already exists")
+        }
+        return nil
+    },
+    func(ctx context.Context, user User) error {
+        // Validate: Additional validation after prepare
+        if !strings.Contains(user.Email, "@") {
+            return fmt.Errorf("invalid email format")
+        }
+        return nil
+    },
+)
+```
+
+### Creating Custom Conditions (Data Registry)
+
+**Data-driven condition:**
+
+```go
+myCondition := rules.NewCondition("isAdmin", func(ctx context.Context) bool {
+    user, ok := rules.GetAs[User](ctx)
+    if !ok {
+        return false
+    }
+    return user.Role == "admin"
+})
+```
+
+**Type-safe condition:**
+
+```go
+myCondition := rules.NewTypedCondition[User]("isAdult", func(ctx context.Context, user User) bool {
+    return user.Age >= 18
+})
+```
+
+**Type-safe condition with Prepare (non-pure):**
+
+Use this when you need to load data before evaluating the condition (e.g., database lookups, API calls):
+
+```go
+myCondition := rules.NewTypedConditionWithPrepare[User, Permissions](
+    "userHasPermission",
+    func(ctx context.Context, user User) (Permissions, error) {
+        // Prepare: Load permissions from database
+        return db.LoadPermissions(ctx, user.ID)
+    },
+    func(ctx context.Context, perms Permissions) bool {
+        // Evaluate: Check if user has edit permission
+        return perms.CanEdit
+    },
+)
+```
+
+### Creating Custom Rules (Closure-Based - Old Style)
+
+```go
+myRule := rules.NewRulePure("myRule", func() error {
+    if user.Disabled {
+        return fmt.Errorf("user is disabled")
+    }
+    return nil
+})
+```
+
+### Creating Custom Conditions (Closure-Based - Old Style)
 
 **Pure conditions** (no side effects):
 
@@ -295,15 +632,79 @@ The `IsPure()` method is important:
 - Return `true` if the condition has no side effects — the engine may skip calling `Prepare()` for optimization
 - Return `false` if the condition has side effects — `Prepare()` will always be called before `IsValid()`
 
+### Main Validation Functions
+
+```go
+// Standard validation (requires registry in context)
+err := rules.Validate(ctx, tree, hooks, "validationName")
+
+// Convenience: validate with data directly
+err := rules.ValidateWithData(ctx, tree, hooks, "name", data)
+
+// Validate multiple targets
+err := rules.ValidateMultiWithData(ctx, []struct{Tree rules.Evaluable; Data any}{...}, hooks, "name")
+```
+
 ### Error Handling
 
-Validation errors include the rule name and message:
+Validation errors include the field name, message, and code:
 
 ```go
 type Error struct {
-    Rule   string
-    Reason string
+    Field string // Field name
+    Err   string // Error message
+    Code  string // Error code for internationalization
 }
+```
+
+---
+
+## Performance
+
+The rules engine is designed for flexibility first, but performs well for high-throughput scenarios:
+
+| Operation | Speed | Allocations |
+|-----------|-------|-------------|
+| `IsA[T]()` type check | ~6-7 ns/op | 0 |
+| `GetAs[T]()` data access | ~6-7 ns/op | 0 |
+| Full tree evaluation | ~500-1000 ns/op | ~10-17 |
+
+For 1000s of evaluations per second:
+
+1. **`IsA[T]()` is optimized** — It caches the target type, making reflection overhead negligible (~6ns)
+2. **Use `ValidateMulti`** — Batch validations to amortize context creation cost
+3. **Avoid deep nesting** — Each level adds overhead; flatten where possible
+4. **Prefer direct field access** — Use `NewTypedRule` instead of `validators.Schema` for hot paths
+
+See [PERFORMANCE.md](PERFORMANCE.md) for detailed benchmarks and optimization guides.
+
+### Fast Type Switching
+
+For maximum performance with multiple types, use `FastTypeSwitch`:
+
+```go
+condition := rules.FastTypeSwitch("isValid", func(data any) bool {
+    switch data.(type) {
+    case User, *User, Product, *Product:
+        return true
+    default:
+        return false
+    }
+})
+```
+
+### Batching Validations
+
+```go
+// Process 1000s of items efficiently
+targets := make([]rules.Target, len(items))
+for i, item := range items {
+    reg := rules.NewDataRegistry(item)
+    targets[i] = rules.Target{
+        // ... configure target
+    }
+}
+err := rules.ValidateMulti(ctx, targets, hooks, "batch")
 ```
 
 ---
@@ -314,4 +715,16 @@ type Error struct {
 go get github.com/mishudark/rules
 ```
 
+---
 
+## Best Practices
+
+1. **Use Data Registry for reusable trees** — When you need to validate multiple instances against the same rules, use `NewRule`, `NewTypedRule`, and `ValidateWithData`.
+
+2. **Use closures for one-off validations** — For simple, single-use validations, `NewRulePure` and `NewConditionPure` are fine.
+
+3. **Use `IsA[T]` for type switching** — When merging trees from different packages, use `IsA[YourType]()` to route validation correctly.
+
+4. **Prefer type-safe rules when possible** — `NewTypedRule[T]` gives you compile-time type safety within the rule function.
+
+5. **Use schema validators for struct validation** — `validators.Schema` with field validators provides clean, declarative struct validation.
