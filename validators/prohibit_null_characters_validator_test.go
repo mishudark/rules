@@ -27,7 +27,7 @@ func TestProhibitNullCharactersValidator(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := ProhibitNullCharactersValidator(tc.value)
+			err := prohibitNullCharactersValidator(tc.value)
 			if (err != nil) != tc.wantErr {
 				t.Errorf("ProhibitNullCharactersValidator() error = %v, wantErr %v", err, tc.wantErr)
 			}

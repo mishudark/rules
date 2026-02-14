@@ -36,7 +36,7 @@ var (
 	asciiOnlyRegex = regexp.MustCompile(`^[\x00-\x7F]*$`)
 )
 
-// RuleValidDomainNameAdvanced creates a validation Rule that checks if a given string
+// ValidDomainNameAdvanced creates a validation Rule that checks if a given string
 // is a valid domain name formaat.
 // It supports enabling/disabling Internationalized Domain Names (IDNs).
 //
@@ -45,7 +45,7 @@ var (
 // Due to Go's regex limitations (no lookarounds), it combines regex with manual checks.
 //
 // It considers an empty string as valid (use a separate 'Required' rule if needed).
-func RuleValidDomainNameAdvanced(fieldName string, domain string, acceptIdna bool) rules.Rule {
+func ValidDomainNameAdvanced(fieldName string, domain string, acceptIdna bool) rules.Rule {
 	ruleName := fmt.Sprintf("RuleValidDomainNameAdvanced[%s, idna=%t]", fieldName, acceptIdna)
 
 	return rules.NewRulePure(ruleName, func() error {

@@ -8,9 +8,9 @@ import (
 	"github.com/mishudark/rules"
 )
 
-// URLValidator validates that a given value is a valid URL.
+// urlValidator validates that a given value is a valid URL.
 // It can also check against a list of allowed schemes (e.g., "http", "https").
-func URLValidator(value string, schemes []string) error {
+func urlValidator(value string, schemes []string) error {
 	if value == "" {
 		return fmt.Errorf("URL cannot be empty")
 	}
@@ -36,10 +36,10 @@ func URLValidator(value string, schemes []string) error {
 	return nil
 }
 
-// NewURLValidator returns a new Rule that validates if a string is a valid URL.
+// URL returns a new Rule that validates if a string is a valid URL.
 // If schemes are provided, it also validates that the URL's scheme is one of the allowed schemes.
-func NewURLValidator(value string, schemes []string) rules.Rule {
+func URL(value string, schemes []string) rules.Rule {
 	return rules.NewRulePure("url_validator", func() error {
-		return URLValidator(value, schemes)
+		return urlValidator(value, schemes)
 	})
 }

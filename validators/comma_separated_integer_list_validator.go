@@ -20,8 +20,8 @@ func validateCommaSeparatedIntegerList(value string) error {
 	return nil
 }
 
-// NewValidateCommaSeparatedIntegerList returns a new rule that validates if a string is a comma-separated list of integers.
-func NewValidateCommaSeparatedIntegerList(value string) rules.Rule {
+// CommaSeparatedIntegerList returns a new rule that validates if a string is a comma-separated list of integers.
+func CommaSeparatedIntegerList(value string) rules.Rule {
 	return rules.NewRulePure("validateCommaSeparatedIntegerList", func() error {
 		return validateCommaSeparatedIntegerList(value)
 	})

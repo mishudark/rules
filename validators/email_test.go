@@ -76,7 +76,7 @@ func TestRuleValidEmail(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			rule := RuleValidEmail("email", tc.email, tc.allowlist)
+			rule := Email("email", tc.email, tc.allowlist)
 			err := rule.Validate(context.Background())
 
 			if (err != nil) != tc.wantErr {

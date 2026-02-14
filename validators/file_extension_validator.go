@@ -27,7 +27,7 @@ func fileExtensionValidator(filename string, allowedExtensions []string) error {
 
 // NewFileExtensionValidator returns a new rule that validates if a filename has an allowed extension.
 // The check is case-insensitive.
-func NewFileExtensionValidator(value string, allowedExtensions []string) rules.Rule {
+func FileExtensionValidator(value string, allowedExtensions []string) rules.Rule {
 	return rules.NewRulePure("fileExtensionValidator", func() error {
 		return fileExtensionValidator(value, allowedExtensions)
 	})

@@ -42,7 +42,7 @@ func TestRuleValidSlug(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.testName, func(t *testing.T) {
-			rule := RuleValidSlug(tc.testName, tc.slug)
+			rule := Slug(tc.testName, tc.slug)
 			err := rule.Validate(ctx)
 
 			if tc.expectFail {
@@ -99,7 +99,7 @@ func TestRuleValidUnicodeSlug(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.testName, func(t *testing.T) {
-			rule := RuleValidUnicodeSlug(tc.testName, tc.slug)
+			rule := UnicodeSlug(tc.testName, tc.slug)
 			err := rule.Validate(ctx)
 
 			if tc.expectFail {

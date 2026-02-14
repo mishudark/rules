@@ -14,7 +14,7 @@ import (
 // Note: This rule checks format only. It does not check if the domain exists or if the mailbox is active.
 // It considers an empty string as valid (use a separate 'Required' rule if the email must be present).
 // If an allowlist of domains is provided, it also checks if the email's domain is in the list.
-func RuleValidEmail(fieldName string, email string, allowlist []string) rules.Rule {
+func Email(fieldName string, email string, allowlist []string) rules.Rule {
 	ruleName := fmt.Sprintf("RuleValidEmail[%s]", fieldName)
 
 	return rules.NewRulePure(ruleName, func() error {
