@@ -107,7 +107,6 @@ func ValidateMulti(ctx context.Context, targets []Target, hooks ProcessingHooks,
 // 3. Prepare the rule for evaluation
 // 4. Validate the prepared rules
 func Validate(ctx context.Context, tree Evaluable, hooks ProcessingHooks, name string) error {
-
 	// Prepare the conditions for evaluation
 	err := tree.PrepareConditions(ctx)
 	if err != nil {

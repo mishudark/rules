@@ -85,7 +85,6 @@ func (r *LeafNode) PrepareConditions(ctx context.Context) error {
 // returns true, indicating success, along with the slice of Rules contained
 // within the node.
 func (n *LeafNode) Evaluate(ctx context.Context, executionPath string) (bool, []Rule) {
-
 	for _, rule := range n.Rules {
 		// Set the execution path for each rule.
 		rule.SetExecutionPath(fmt.Sprintf("%s -> %s -> %s", executionPath, "leafNode", rule.Name()))
@@ -584,7 +583,6 @@ func (o *OrRules) Prepare(ctx context.Context) error {
 
 	for _, rule := range o.Rules {
 		err := rule.Prepare(ctx)
-
 		if err != nil {
 			return err
 		}
@@ -650,6 +648,44 @@ func (c *ConditionPure) IsPure() bool {
 func NewConditionPure(name string, condition func() bool) Condition {
 	return &ConditionPure{
 		name:      name,
+		condition: condition,
+	}
+}
+
+// ConditionSideEffect has side effects (e.g., fetching data) and uses Prepare.
+type ConditionSideEffect struct {
+	name      string
+	prepare   func(ctx context.Context) error
+	condition func(ctx context.Context) bool
+}
+
+var _ Condition = (*ConditionSideEffect)(nil) // Ensure ConditionSideEffect implements the Condition interface.
+
+func (c *ConditionSideEffect) Prepare(ctx context.Context) error {
+	if c.prepare != nil {
+		return c.prepare(ctx)
+	}
+	return nil
+}
+
+func (c *ConditionSideEffect) Name() string {
+	return c.name
+}
+
+func (c *ConditionSideEffect) IsValid(ctx context.Context) bool {
+	return c.condition(ctx)
+}
+
+func (c *ConditionSideEffect) IsPure() bool {
+	return false
+}
+
+// NewConditionSideEffect creates a condition with side effects (e.g., fetching data).
+// The prepare function is called before IsValid.
+func NewConditionSideEffect(name string, prepare func(ctx context.Context) error, condition func(ctx context.Context) bool) Condition {
+	return &ConditionSideEffect{
+		name:      name,
+		prepare:   prepare,
 		condition: condition,
 	}
 }

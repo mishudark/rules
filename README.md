@@ -258,11 +258,42 @@ myRule := rules.NewRulePure("myRule", func(ctx context.Context, data any) error 
 
 ### Creating Custom Conditions
 
+**Pure conditions** (no side effects):
+
 ```go
 myCondition := rules.NewConditionPure("isAdmin", func() bool {
     return user.Role == "admin"
 })
 ```
+
+**Impure conditions** (with side effects like fetching data):
+
+Use `NewConditionSideEffect()` to create conditions that fetch data before evaluating:
+
+```go
+var user User // closure variable to share state between Prepare and IsValid
+
+tree := rules.Node(
+    rules.NewConditionSideEffect(
+        "userActive",
+        func(ctx context.Context) error {
+            // Side effect: fetch user from database
+            var err error
+            user, err = db.GetUser(ctx, userID)
+            return err
+        },
+        func(ctx context.Context) bool {
+            // Check if user is active
+            return user.Active
+        },
+    ),
+    rules.Rules(validators.RuleValidEmail("email", user.Email, nil)),
+)
+```
+
+The `IsPure()` method is important:
+- Return `true` if the condition has no side effects — the engine may skip calling `Prepare()` for optimization
+- Return `false` if the condition has side effects — `Prepare()` will always be called before `IsValid()`
 
 ### Error Handling
 
