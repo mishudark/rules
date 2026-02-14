@@ -62,7 +62,6 @@ func (r *RuleValidContentType) Validate(ctx context.Context) error {
 	// We use io.ReadAtLeast to ensure we read *something* if the file isn't empty,
 	// but it's okay if the file is smaller than sniffLen.
 	n, err := io.ReadAtLeast(r.reader, buffer, 1) // Read at least 1 byte
-
 	// Handle errors during reading
 	if err != nil {
 		// If the error is EOF and we read 0 bytes, it's an empty file.

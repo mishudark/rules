@@ -59,4 +59,3 @@ func UnicodeSlug(fieldName string, slug string) rules.Rule {
 		return nil
 	})
 }
-
