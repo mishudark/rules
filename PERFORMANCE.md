@@ -128,11 +128,8 @@ func ValidateProductCatalog(products []any) error {
         
         targets := make([]rules.Target, end-i)
         for j, p := range products[i:end] {
-            reg := rules.NewDataRegistry(p)
-            targets[j] = rules.Target{
-                tree: tree,
-                ctx:  rules.WithRegistry(ctx, reg),
-            }
+            targetCtx := rules.WithRegistry(ctx, rules.NewDataRegistry(p))
+            targets[j] = *rules.NewTarget(targetCtx, tree)
         }
         
         if err := rules.ValidateMulti(ctx, targets, hooks, "batch"); err != nil {
@@ -405,10 +402,8 @@ func ValidateOrdersHotPath(orders []Order) error {
     
     for i, order := range orders {
         // Reuse parent context with only data changing
-        targets[i] = rules.Target{
-            tree: tree,
-            ctx:  rules.WithRegistry(ctx, rules.NewDataRegistry(order)),
-        }
+        targetCtx := rules.WithRegistry(ctx, rules.NewDataRegistry(order))
+        targets[i] = *rules.NewTarget(targetCtx, tree)
     }
     
     return rules.ValidateMulti(ctx, targets, hooks, "orders")
@@ -467,11 +462,12 @@ func buildActiveUserTree() rules.Evaluable {
     )
 }
 
-// Usage
+// Usage - Create one tree per validation when using stateful conditions
 func ValidateUsers(users []User) error {
-    tree := buildActiveUserTree()
-    
+    // ⚠️ IMPORTANT: TypedConditionWithPrepare stores state (loadedData).
+    // When validating multiple items, create one tree per target.
     for _, user := range users {
+        tree := buildActiveUserTree() // Create tree inside loop
         if err := rules.ValidateWithData(ctx, tree, hooks, "validate", user); err != nil {
             return err
         }
@@ -610,10 +606,8 @@ When validating many items against the same tree, use `ValidateMulti`:
 ```go
 targets := make([]rules.Target, len(users))
 for i, user := range users {
-    reg := rules.NewDataRegistry(user)
-    targets[i] = rules.Target{
-        // Set up target
-    }
+    targetCtx := rules.WithRegistry(ctx, rules.NewDataRegistry(user))
+    targets[i] = *rules.NewTarget(targetCtx, tree)
 }
 err := rules.ValidateMulti(ctx, targets, hooks, "batch")
 ```

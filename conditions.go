@@ -378,6 +378,23 @@ func (c *TypedConditionWithPrepare[In, T]) IsPure() bool {
 // The prepare function receives typed input data and loads additional data,
 // which is then passed to the condition function during IsValid.
 //
+// ⚠️ IMPORTANT: This condition stores state (loadedData) and is NOT safe for concurrent
+// use. When validating multiple items concurrently, create one tree per target:
+//
+//	// CORRECT: One tree per target
+//	for _, user := range users {
+//	    tree := buildTree() // Create tree inside loop
+//	    err := rules.ValidateWithData(ctx, tree, hooks, "validate", user)
+//	}
+//
+//	// WRONG: Sharing tree across goroutines causes race conditions
+//	tree := buildTree()
+//	for _, user := range users {
+//	    go func(u User) {
+//	        err := rules.ValidateWithData(ctx, tree, hooks, "validate", u) // RACE!
+//	    }(user)
+//	}
+//
 // Example:
 //
 //	condition := rules.NewTypedConditionWithPrepare[User, Permissions](
