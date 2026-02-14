@@ -1,220 +1,235 @@
-# Go Rules Engine: Flexible Validation & Decision Trees
+# Go Rules Engine
 
-The Go Rules Engine is a powerful and extensible Go library designed to simplify the creation of complex validation and decision-making logic. It allows you to define flexible rule trees, enabling clear separation of concerns between conditions ("IF this is true...") and the actions or validations that follow ("THEN perform these checks...").
+A flexible validation library that lets you build complex rules as a tree structure. Think of it as "if this, then that" for validation logic.
 
-**Key Features:**
+## When to use this?
 
-*   **Intuitive Tree Structure:** Build decision flows with `Condition`s and `Rule`s organized into a readable tree.
-*   **Extensible Components:** Easily define custom conditions and rules to fit your specific business logic.
-*   **Clear Separation of Concerns:** Distinguish between `Condition` evaluation and `Rule` execution.
-*   **Context-Aware Processing:** Leverage `context.Context` for managing timeouts, cancellations, and request-scoped data.
-*   **Detailed Error Reporting:** Capture and report specific validation errors with `rules.Error`.
-*   **Lifecycle Hooks:** Integrate custom logic at various stages of the validation process.
+- **Feature flags** — enable features based on user attributes
+- **A/B testing** — route users to different experiences
+- **Form validation** — validate complex forms with conditions
+- **Business rules** — implement decision trees that non-developers can visualize
 
-This library is ideal for scenarios requiring dynamic validation, A/B testing logic, feature flagging, or any system where decisions are based on a set of defined criteria.
+---
 
-## 🚀 Getting Started
+## Quick Examples
 
-Here's a simple example to get you started. Let's say you want to validate a user's age and country.
+### Simple validation
+
+Validate that a user is over 21 and from the USA:
+
+```go
+user := User{Age: 25, Country: "USA"}
+
+tree := rules.Node(
+    rules.NewConditionPure("fromUSA", func() bool {
+        return user.Country == "USA"
+    }),
+    rules.Rules(validators.RuleMinValue("age", user.Age, 21)),
+)
+
+err := rules.Validate(context.Background(), tree, nil, "check")
+// err == nil
+```
+
+### Multiple conditions (AND)
+
+Require all conditions to pass:
+
+```go
+tree := rules.AllOf(
+    rules.Rules(validators.RuleMinValue("age", 25, 18)),
+    rules.Rules(validators.RuleMaxValue("age", 25, 65)),
+    rules.Rules(validators.RuleValidEmail("email", "user@example.com", nil)),
+)
+```
+
+### Multiple conditions (OR)
+
+Require at least one condition to pass:
+
+```go
+tree := rules.AnyOf(
+    rules.Rules(validators.RuleValidEmail("email", "user@example.com", nil)),
+    rules.Rules(validators.RuleValidDomainNameAdvanced("domain", "example.com", false)),
+)
+```
+
+### Nested logic
+
+Combine conditions into complex trees:
+
+```go
+tree := rules.Root(
+    rules.Node(
+        // IF user is premium
+        rules.NewConditionPure("isPremium", func() bool { return user.IsPremium }),
+        // THEN require email verification
+        rules.Rules(validators.RuleValidEmail("email", user.Email, nil)),
+    ),
+    rules.Node(
+        // IF user is not premium
+        rules.NewConditionPure("isNotPremium", func() bool { return !user.IsPremium }),
+        // THEN just check minimum age
+        rules.Rules(validators.RuleMinValue("age", user.Age, 13)),
+    ),
+)
+```
+
+---
+
+## Common Validators
+
+Here's what you can validate out of the box:
+
+| Validator | Use for |
+|-----------|---------|
+| `RuleMinValue` / `RuleMaxValue` | Numbers (age, price, quantity) |
+| `RuleValidEmail` | Email addresses |
+| `URLValidator` | URLs with optional scheme restrictions |
+| `RuleValidDomainNameAdvanced` | Domain names |
+| `MinLengthString` / `MaxLengthString` | String sizes |
+| `MinLengthSlice` / `MaxLengthSlice` | Array sizes |
+| `NewFileExtensionValidator` | File types by extension |
+| `NewValidateIPv4Address` / `NewValidateIPv6Address` | IP addresses |
+| `NewDecimalValidator` | Decimal numbers with precision control |
+| `NewValidateCommaSeparatedIntegerList` | Comma-separated numbers |
+| `NewProhibitNullCharactersValidator` | Strings without null chars |
+| `NewSlugValidator` | URL-friendly slugs |
+| `NewStepValueValidator` | Values in increments |
+
+---
+
+## Full Example: User Registration
 
 ```go
 package main
 
 import (
-	"context"
-	"fmt"
-	"strings"
+    "context"
+    "fmt"
 
-	"github.com/mishudark/rules"
-	"github.com/mishudark/rules/validators"
+    "github.com/mishudark/rules"
+    "github.com/mishudark/rules/validators"
 )
 
-// Mock User Data
-type User struct {
-	Age     int
-	Country string
+type RegistrationRequest struct {
+    Email     string
+    Age       int
+    Country   string
+    Plan      string // "free" or "premium"
+    Website   string
+}
+
+func ValidateRegistration(ctx context.Context, req RegistrationRequest) error {
+    tree := rules.Root(
+        // Email is always required
+        rules.Rules(validators.RuleValidEmail("email", req.Email, nil)),
+        
+        // Age check for everyone
+        rules.Rules(validators.RuleMinValue("age", req.Age, 13)),
+        
+        rules.AllOf(
+            // Premium users need a valid website
+            rules.NewConditionPure("isPremium", func() bool { return req.Plan == "premium" }),
+            rules.Rules(validators.URLValidator(req.Website, []string{"https"})),
+        ),
+        
+        rules.AnyOf(
+            // US users need 18+, others need 21+
+            rules.Node(
+                rules.NewConditionPure("isUS", func() bool { return req.Country == "US" }),
+                rules.Rules(validators.RuleMinValue("age", req.Age, 18)),
+            ),
+            rules.Rules(validators.RuleMinValue("age", req.Age, 21)),
+        ),
+    )
+    
+    return rules.Validate(ctx, tree, nil, "registration")
 }
 
 func main() {
-	user := User{
-		Age:     25,
-		Country: "USA",
-	}
+    req := RegistrationRequest{
+        Email:    "john@example.com",
+        Age:      25,
+        Country:  "US",
+        Plan:     "free",
+        Website:  "",
+    }
 
-	// Condition: Check if country is USA
-	countryIsUSA := rules.NewConditionPure("countryIsUSA", func() bool {
-		return strings.ToUpper(user.Country) == "USA"
-	})
-
-	// Rule: Check if age is greater than 20
-	ageGreaterThan20 := validators.RuleMinValue("Age", user.Age, 21)
-
-	// This tree defines the logic:
-	// - IF the country is USA:
-	//   - THEN check if age >= 21.
-	tree := rules.Node(
-		countryIsUSA,
-		rules.Rules(ageGreaterThan20),
-	)
-
-	// Validate the Tree
-	err := rules.Validate(context.Background(), tree, nil, "userValidation")
-
-	// Check for Validation Errors
-	if err != nil {
-		fmt.Printf("Validation failed: %v
-", err)
-	} else {
-		fmt.Println("Validation completed successfully!")
-	}
+    if err := ValidateRegistration(context.Background(), req); err != nil {
+        fmt.Printf("Validation failed: %v\n", err)
+    } else {
+        fmt.Println("Registration valid!")
+    }
 }
 ```
 
-## 📚 Core Concepts
+---
 
-The library is built around a few core concepts:
+## API Reference
 
-*   **`Evaluable`**: The interface for any part of the tree that can be evaluated (Nodes, Rule sets).
-*   **`Condition`**: Represents a check that returns `true` or `false`.
-*   **`Rule`**: Represents the actual validation logic.
-*   **Nodes**:
-    *   `ConditionNode`: Links a `Condition` to child `Evaluable`s. (`rules.Node`)
-    *   `LeafNode`: Holds a list of `Rule`s to be executed. (`rules.Rules`)
-    *   `AllOfNode`: Logical AND for child `Evaluable`s. (`rules.AllOf`)
-    *   `AnyOfNode`: Logical OR for child `Evaluable`s. (`rules.AnyOf`, `rules.Root`)
-*   **`Validate(...)`**: The main function to execute the validation against a tree.
-## ✅ Available Validators
+### Core Types
 
-Here is a list of the currently available validators in this library, with examples for each.
+- **`Rule`** — The actual validation logic (e.g., "age must be > 18")
+- **`Condition`** — A boolean check that controls whether child rules run (e.g., "is user premium?")
+- **`Evaluable`** — Anything that can be evaluated in the tree
 
-### Comma Separated Integer List Validator
+### Tree Building Functions
 
-Validates that a string is a comma-separated list of integers.
+| Function | What it does |
+|----------|--------------|
+| `rules.Root(children...)` | Top-level container, passes if any child passes |
+| `rules.AllOf(children...)` | All children must pass (AND) |
+| `rules.AnyOf(children...)` | At least one child must pass (OR) |
+| `rules.Node(condition, children...)` | Runs children only if condition is true |
+| `rules.Rules(rules...)` | Leaf node containing actual rules |
 
-```go
-rule := validators.NewValidateCommaSeparatedIntegerList("1,2,3,4")
-// err == nil
-
-rule = validators.NewValidateCommaSeparatedIntegerList("1,2,a,4")
-// err != nil
-```
-
-### Content Type
-
-Checks if the content type of a file matches one of the allowed MIME types.
+### Main Function
 
 ```go
-file := strings.NewReader("this is a plain text file")
-rule := validators.NewRuleContentType("file", file, []string{"text/plain"})
-// err == nil
-
-file = strings.NewReader("this is a plain text file")
-rule = validators.NewRuleContentType("file", file, []string{"image/jpeg"})
-// err != nil
+err := rules.Validate(ctx, tree, data, "validationName")
 ```
 
-### Decimal Validator
+- `ctx` — Context for timeouts/cancellation
+- `tree` — Your rule tree (any `Evaluable`)
+- `data` — Optional data passed to rules (can be nil)
+- `validationName` — Name for error reporting
 
-Validates a decimal number string against `max_digits` and `decimal_places`.
+### Creating Custom Rules
 
 ```go
-rule := validators.NewDecimalValidator("123.45", 5, 2)
-// err == nil
-
-rule = validators.NewDecimalValidator("123.456", 5, 2)
-// err != nil
+myRule := rules.NewRulePure("myRule", func(ctx context.Context, data any) error {
+    user := data.(User)
+    if user.Disabled {
+        return fmt.Errorf("user is disabled")
+    }
+    return nil
+})
 ```
 
-### Domain
-
-Validates that a string is a valid domain name.
+### Creating Custom Conditions
 
 ```go
-rule := validators.RuleValidDomainNameAdvanced("domain", "example.com", false)
-// err == nil
-
-rule = validators.RuleValidDomainNameAdvanced("domain", "example..com", false)
-// err != nil
+myCondition := rules.NewConditionPure("isAdmin", func() bool {
+    return user.Role == "admin"
+})
 ```
 
-### Email
+### Error Handling
 
-Validates that a string is a valid email address.
+Validation errors include the rule name and message:
 
 ```go
-rule := validators.RuleValidEmail("email", "test@example.com", nil)
-// err == nil
-
-rule = validators.RuleValidEmail("email", "not-an-email", nil)
-// err != nil
+type Error struct {
+    Rule   string
+    Reason string
+}
 ```
 
-### File Extension Validator
+---
 
-Validates that a filename has an allowed extension.
+## Installation
 
-```go
-rule := validators.NewFileExtensionValidator("document.pdf", []string{"pdf", "docx"})
-// err == nil
-
-rule = validators.NewFileExtensionValidator("image.jpg", []string{"pdf", "docx"})
-// err != nil
+```bash
+go get github.com/mishudark/rules
 ```
-
-### IP Address Validator
-
-Validates that a string is a valid IPv4, IPv6 or any IP address.
-
-```go
-rule := validators.NewValidateIPv4Address("192.168.1.1")
-// err == nil
-
-rule = validators.NewValidateIPv6Address("2001:0db8:85a3:0000:0000:8a2e:0370:7334")
-// err == nil
-
-rule = validators.NewValidateIPv46Address("192.168.1.1")
-// err == nil
-```
-
-### Length
-
-Validates the length of a string or a slice.
-
-```go
-rule := validators.MinLengthString("name", "test", 3)
-// err == nil
-
-rule = validators.MaxLengthString("name", "testing", 5)
-// err != nil
-
-rule = validators.MinLengthSlice("items", []any{1, 2, 3}, 2)
-// err == nil
-
-rule = validators.MaxLengthSlice("items", []any{1, 2, 3, 4}, 3)
-// err != nil
-```
-
-### Max Value
-
-Validates that a numeric value is less than or equal to a specified maximum value.
-
-```go
-rule := validators.RuleMaxValue("age", 25, 30)
-// err == nil
-
-rule = validators.RuleMaxValue("age", 35, 30)
-// err != nil
-```
-
-### Min Value
-
-Validates that a numeric value is greater than or equal to a specified minimum value.
-
-```go
-rule := validators.RuleMinValue("age", 25, 20)
-// err == nil
-
-rule = validators.RuleMinValue("age", 15, 20)
-// err != nil
-```
-
