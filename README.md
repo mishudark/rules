@@ -154,6 +154,21 @@ err := rules.Validate(ctx, tree, hooks, "validate")
 user, ok := rules.GetAs[User](ctx)
 ```
 
+### Batch validation
+
+Validate multiple items efficiently with `ValidateMultiWithData`:
+
+```go
+// Validate many users against the same tree
+targets := []rules.TreeAndData{
+    {Tree: userTree, Data: user1},
+    {Tree: userTree, Data: user2},
+    {Tree: productTree, Data: product1}, // Can use different trees
+}
+
+err := rules.ValidateMultiWithData(ctx, targets, hooks, "batch")
+```
+
 ---
 
 ### Multiple rules (all must pass)
@@ -317,29 +332,6 @@ condition := rules.NewCondition("isAdult", func(ctx context.Context) bool {
     }
     return user.Age >= 18
 })
-```
-
----
-
-## Schema Validation
-
-Validate struct fields using path-based validators:
-
-```go
-type User struct {
-    Name  string
-    Email string
-    Age   int
-}
-
-rule := validators.Schema("validateUser", []validators.FieldValidator{
-    validators.RequiredField("Name"),
-    validators.MinLengthField("Email", 5),
-    validators.EmailField("Email", nil),
-    validators.MinValueField[int]("Age", 18),
-})
-
-err := rules.ValidateWithData(ctx, rules.Rules(rule), hooks, "validate", user)
 ```
 
 ---
@@ -580,6 +572,24 @@ myCondition := rules.NewTypedConditionWithPrepare[User, Permissions](
         return perms.CanEdit
     },
 )
+```
+
+⚠️ **Concurrency Warning:** `NewTypedConditionWithPrepare` stores state (`loadedData`). When validating multiple items, create one tree per target, or use pure conditions for shared trees:
+
+```go
+// ✅ CORRECT: One tree per validation
+for _, user := range users {
+    tree := buildTree() // Create inside loop
+    err := rules.ValidateWithData(ctx, tree, hooks, "validate", user)
+}
+
+// ❌ WRONG: Sharing across goroutines causes races
+tree := buildTree()
+for _, user := range users {
+    go func(u User) {
+        err := rules.ValidateWithData(ctx, tree, hooks, "validate", u) // RACE!
+    }(user)
+}
 ```
 
 ### Creating Custom Rules (Closure-Based - Old Style)
