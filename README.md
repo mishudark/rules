@@ -31,26 +31,50 @@ err := rules.Validate(context.Background(), tree, nil, "check")
 // err == nil
 ```
 
-### Multiple conditions (AND)
+### Multiple rules (all must pass)
 
-Require all conditions to pass:
+Pass multiple rules to `Rules()` — all of them must pass:
 
 ```go
-tree := rules.AllOf(
-    rules.Rules(validators.RuleMinValue("age", 25, 18)),
-    rules.Rules(validators.RuleMaxValue("age", 25, 65)),
-    rules.Rules(validators.RuleValidEmail("email", "user@example.com", nil)),
+tree := rules.Rules(
+    validators.RuleMinValue("age", 25, 18),
+    validators.RuleMaxValue("age", 25, 65),
+    validators.RuleValidEmail("email", "user@example.com", nil),
 )
 ```
 
-### Multiple conditions (OR)
+### At least one rule must pass
 
-Require at least one condition to pass:
+Use `Or()` when at least one rule should pass:
 
 ```go
-tree := rules.AnyOf(
-    rules.Rules(validators.RuleValidEmail("email", "user@example.com", nil)),
-    rules.Rules(validators.RuleValidDomainNameAdvanced("domain", "example.com", false)),
+tree := rules.Rules(
+    validators.Or(
+        validators.RuleValidEmail("contact", "user@example.com", nil),
+        validators.RuleValidDomainNameAdvanced("contact", "example.com", false),
+    ),
+)
+```
+
+### Either/Then (if-else)
+
+Use `Either()` for if-else logic — if condition is true, evaluate left branch; otherwise, evaluate right branch:
+
+```go
+// IF user is premium, require age 18+ AND website; ELSE require just age 13+
+tree := rules.Either(
+    rules.NewConditionPure("isPremium", func() bool { return user.Plan == "premium" }),
+    // Left branch (condition is true): premium rules
+    []rules.Evaluable{
+        rules.Rules(
+            validators.RuleMinValue("age", user.Age, 18),
+            validators.URLValidator(user.Website, []string{"https"}),
+        ),
+    },
+    // Right branch (condition is false): free user rules
+    []rules.Evaluable{
+        rules.Rules(validators.RuleMinValue("age", user.Age, 13)),
+    },
 )
 ```
 
@@ -60,17 +84,43 @@ Combine conditions into complex trees:
 
 ```go
 tree := rules.Root(
+    // IF user is premium
     rules.Node(
-        // IF user is premium
         rules.NewConditionPure("isPremium", func() bool { return user.IsPremium }),
         // THEN require email verification
         rules.Rules(validators.RuleValidEmail("email", user.Email, nil)),
     ),
+    // IF user is NOT premium
     rules.Node(
-        // IF user is not premium
         rules.NewConditionPure("isNotPremium", func() bool { return !user.IsPremium }),
         // THEN just check minimum age
         rules.Rules(validators.RuleMinValue("age", user.Age, 13)),
+    ),
+)
+```
+
+### More complex nesting
+
+```go
+tree := rules.Root(
+    rules.Rules(validators.RuleValidEmail("email", user.Email, nil)),
+    
+    // Premium users: age 18+ AND valid website
+    rules.Node(
+        rules.NewConditionPure("isPremium", func() bool { return user.Plan == "premium" }),
+        rules.Rules(
+            validators.RuleMinValue("age", user.Age, 18),
+            validators.URLValidator(user.Website, []string{"https"}),
+        ),
+    ),
+    
+    // Free users: age 13+ AND valid country
+    rules.Node(
+        rules.NewConditionPure("isFree", func() bool { return user.Plan == "free" }),
+        rules.Rules(
+            validators.RuleMinValue("age", user.Age, 13),
+            validators.RuleValidDomainNameAdvanced("country", user.Country, false),
+        ),
     ),
 )
 ```
@@ -113,11 +163,11 @@ import (
 )
 
 type RegistrationRequest struct {
-    Email     string
-    Age       int
-    Country   string
-    Plan      string // "free" or "premium"
-    Website   string
+    Email    string
+    Age      int
+    Country  string
+    Plan     string // "free" or "premium"
+    Website  string
 }
 
 func ValidateRegistration(ctx context.Context, req RegistrationRequest) error {
@@ -128,18 +178,21 @@ func ValidateRegistration(ctx context.Context, req RegistrationRequest) error {
         // Age check for everyone
         rules.Rules(validators.RuleMinValue("age", req.Age, 13)),
         
-        rules.AllOf(
-            // Premium users need a valid website
+        // Premium users need a valid website
+        rules.Node(
             rules.NewConditionPure("isPremium", func() bool { return req.Plan == "premium" }),
             rules.Rules(validators.URLValidator(req.Website, []string{"https"})),
         ),
         
-        rules.AnyOf(
-            // US users need 18+, others need 21+
-            rules.Node(
-                rules.NewConditionPure("isUS", func() bool { return req.Country == "US" }),
-                rules.Rules(validators.RuleMinValue("age", req.Age, 18)),
-            ),
+        // US users need 18+, others need 21+
+        rules.Node(
+            rules.NewConditionPure("isUS", func() bool { return req.Country == "US" }),
+            rules.Rules(validators.RuleMinValue("age", req.Age, 18)),
+        ),
+        
+        // Non-US users need 21+ (only runs if isUS is false)
+        rules.Node(
+            rules.NewConditionPure("isNotUS", func() bool { return req.Country != "US" }),
             rules.Rules(validators.RuleMinValue("age", req.Age, 21)),
         ),
     )
@@ -149,11 +202,11 @@ func ValidateRegistration(ctx context.Context, req RegistrationRequest) error {
 
 func main() {
     req := RegistrationRequest{
-        Email:    "john@example.com",
-        Age:      25,
-        Country:  "US",
-        Plan:     "free",
-        Website:  "",
+        Email:   "john@example.com",
+        Age:     25,
+        Country: "US",
+        Plan:    "free",
+        Website: "",
     }
 
     if err := ValidateRegistration(context.Background(), req); err != nil {
@@ -179,10 +232,10 @@ func main() {
 | Function | What it does |
 |----------|--------------|
 | `rules.Root(children...)` | Top-level container, passes if any child passes |
-| `rules.AllOf(children...)` | All children must pass (AND) |
-| `rules.AnyOf(children...)` | At least one child must pass (OR) |
 | `rules.Node(condition, children...)` | Runs children only if condition is true |
-| `rules.Rules(rules...)` | Leaf node containing actual rules |
+| `rules.Either(condition, left, right)` | If-else: evaluates left if condition is true, otherwise right |
+| `rules.Rules(rules...)` | Leaf node — all rules must pass |
+| `rules.Or(rules...)` | Passes if at least one rule passes |
 
 ### Main Function
 
