@@ -27,7 +27,7 @@ tree := rules.Node(
     rules.Rules(validators.RuleMinValue("age", user.Age, 21)),
 )
 
-err := rules.Validate(context.Background(), tree, nil, "check")
+err := rules.Validate(context.Background(), tree, rules.ProcessingHooks{}, "check")
 // err == nil
 ```
 
@@ -49,7 +49,7 @@ Use `Or()` when at least one rule should pass:
 
 ```go
 tree := rules.Rules(
-    validators.Or(
+    rules.Or(
         validators.RuleValidEmail("contact", "user@example.com", nil),
         validators.RuleValidDomainNameAdvanced("contact", "example.com", false),
     ),
@@ -65,16 +65,12 @@ Use `Either()` for if-else logic — if condition is true, evaluate left branch;
 tree := rules.Either(
     rules.NewConditionPure("isPremium", func() bool { return user.Plan == "premium" }),
     // Left branch (condition is true): premium rules
-    []rules.Evaluable{
-        rules.Rules(
-            validators.RuleMinValue("age", user.Age, 18),
-            validators.URLValidator(user.Website, []string{"https"}),
-        ),
-    },
+    rules.Rules(
+        validators.RuleMinValue("age", user.Age, 18),
+        validators.URLValidator(user.Website, []string{"https"}),
+    ),
     // Right branch (condition is false): free user rules
-    []rules.Evaluable{
-        rules.Rules(validators.RuleMinValue("age", user.Age, 13)),
-    },
+    rules.Rules(validators.RuleMinValue("age", user.Age, 13)),
 )
 ```
 
@@ -197,7 +193,7 @@ func ValidateRegistration(ctx context.Context, req RegistrationRequest) error {
         ),
     )
     
-    return rules.Validate(ctx, tree, nil, "registration")
+    return rules.Validate(ctx, tree, rules.ProcessingHooks{}, "registration")
 }
 
 func main() {
@@ -240,12 +236,12 @@ func main() {
 ### Main Function
 
 ```go
-err := rules.Validate(ctx, tree, data, "validationName")
+err := rules.Validate(ctx, tree, hooks, "validationName")
 ```
 
 - `ctx` — Context for timeouts/cancellation
 - `tree` — Your rule tree (any `Evaluable`)
-- `data` — Optional data passed to rules (can be nil)
+- `hooks` — Optional hooks structure for processing
 - `validationName` — Name for error reporting
 
 ### Creating Custom Rules
