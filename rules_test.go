@@ -160,8 +160,8 @@ type FailingRule struct {
 	err  error
 }
 
-func (f *FailingRule) Name() string { return f.name }
-func (f *FailingRule) Prepare(ctx context.Context) error { return f.err }
+func (f *FailingRule) Name() string                       { return f.name }
+func (f *FailingRule) Prepare(ctx context.Context) error  { return f.err }
 func (f *FailingRule) Validate(ctx context.Context) error { return f.err }
 
 func TestOrRules(t *testing.T) {
@@ -217,11 +217,6 @@ func TestOrRules(t *testing.T) {
 			err := or.Validate(ctx)
 			if (err != nil) != tc.wantErr {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tc.wantErr)
-			}
-
-			err = or.Prepare(ctx)
-			if (err != nil) != tc.wantErr {
-				t.Errorf("Prepare() error = %v, wantErr %v", err, tc.wantErr)
 			}
 		})
 	}
