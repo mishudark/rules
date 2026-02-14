@@ -2,6 +2,7 @@ package rules
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -151,4 +152,77 @@ func nameEqBob(name string) Condition {
 			return name == "Bob"
 		},
 	)
+}
+
+type FailingRule struct {
+	RuleBase
+	name string
+	err  error
+}
+
+func (f *FailingRule) Name() string { return f.name }
+func (f *FailingRule) Prepare(ctx context.Context) error { return f.err }
+func (f *FailingRule) Validate(ctx context.Context) error { return f.err }
+
+func TestOrRules(t *testing.T) {
+	t.Parallel()
+
+	errFail := errors.New("fail")
+
+	tt := []struct {
+		name    string
+		rules   []Rule
+		wantErr bool
+	}{
+		{
+			name: "all fail",
+			rules: []Rule{
+				&FailingRule{name: "fail1", err: errFail},
+				&FailingRule{name: "fail2", err: errFail},
+			},
+			wantErr: true,
+		},
+		{
+			name: "one succeeds",
+			rules: []Rule{
+				&FailingRule{name: "fail1", err: errFail},
+				NewRulePure("success1", func() error { return nil }),
+			},
+			wantErr: false,
+		},
+		{
+			name: "first succeeds",
+			rules: []Rule{
+				NewRulePure("success1", func() error { return nil }),
+				&FailingRule{name: "fail1", err: errFail},
+			},
+			wantErr: false,
+		},
+		{
+			name: "all succeed",
+			rules: []Rule{
+				NewRulePure("success1", func() error { return nil }),
+				NewRulePure("success2", func() error { return nil }),
+			},
+			wantErr: false,
+		},
+	}
+
+	ctx := context.Background()
+
+	for _, tc := range tt {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			or := NewOrRules(tc.rules...)
+			err := or.Validate(ctx)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tc.wantErr)
+			}
+
+			err = or.Prepare(ctx)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("Prepare() error = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
 }

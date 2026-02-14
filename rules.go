@@ -407,9 +407,8 @@ func (r *RuleBase) GetExecutionPath() string {
 // The Prepare method for a RulePure is a no-op.
 type RulePure struct {
 	RuleBase
-	executionPath string
-	name          string
-	rule          func() error
+	name string
+	rule func() error
 }
 
 var _ Rule = (*RulePure)(nil) // Ensure RulePure implements the Rule interface.
@@ -442,6 +441,69 @@ func NewRulePure(name string, rule func() error) Rule {
 	return &RulePure{
 		name: name,
 		rule: rule,
+	}
+}
+
+// OrRules represents a Rule that encapsulates multiple Rules.
+// When Prepare or Validate is called on OrRules, it executes the corresponding
+// method on each child Rule. If any child Rule succeeds, it stops and returns nil.
+// If all child rules fail, it returns the error from the last rule.
+type OrRules struct {
+	RuleBase
+	Rules []Rule
+}
+
+var _ Rule = (*OrRules)(nil) // Ensure OrRules implements the Rule interface.
+
+// Name returns a combined name for OrRules.
+func (o *OrRules) Name() string {
+	return "orRules"
+}
+
+// Prepare implements the Rule interface for OrRules. It calls Prepare() on each
+// Rule. If any child Rule's Prepare() returns nil, it returns nil immediately.
+func (o *OrRules) Prepare(ctx context.Context) error {
+	var lastErr error
+	if len(o.Rules) == 0 {
+		return nil
+	}
+
+	for _, rule := range o.Rules {
+		err := rule.Prepare(ctx)
+		if err != nil {
+			lastErr = err
+			break
+		}
+	}
+
+	return lastErr
+}
+
+// Validate implements the Rule interface for OrRules. It calls Validate() on each
+// Rule. If any child Rule's Validate() returns nil, it returns nil immediately.
+func (o *OrRules) Validate(ctx context.Context) error {
+	var lastErr error
+	if len(o.Rules) == 0 {
+		return nil
+	}
+
+	for _, rule := range o.Rules {
+		err := rule.Validate(ctx)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		return fmt.Errorf("all rules failed in OrRules.Validate")
+	}
+	return lastErr
+}
+
+// NewOrRules is a constructor function that creates and returns a new OrRules.
+func NewOrRules(rules ...Rule) Rule {
+	return &OrRules{
+		Rules: rules,
 	}
 }
 
