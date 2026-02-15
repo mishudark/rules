@@ -96,7 +96,7 @@ func BenchmarkFullTree(b *testing.B) {
 		tree := Node(
 			IsA[benchUser]("isUser"),
 			Rules(
-				NewTypedRule[benchUser]("checkAge", func(ctx context.Context, u benchUser) error {
+				NewTypedRule("checkAge", func(ctx context.Context, u benchUser) error {
 					if u.Age < 18 {
 						return fmt.Errorf("too young")
 					}
@@ -123,7 +123,7 @@ func BenchmarkFullTree(b *testing.B) {
 				}
 			}),
 			Rules(
-				NewTypedRule[benchUser]("checkAge", func(ctx context.Context, u benchUser) error {
+				NewTypedRule("checkAge", func(ctx context.Context, u benchUser) error {
 					if u.Age < 18 {
 						return fmt.Errorf("too young")
 					}
@@ -150,7 +150,7 @@ func BenchmarkFullTree(b *testing.B) {
 				return ok
 			}),
 			Rules(
-				NewTypedRule[benchUser]("checkAge", func(ctx context.Context, u benchUser) error {
+				NewTypedRule("checkAge", func(ctx context.Context, u benchUser) error {
 					if u.Age < 18 {
 						return fmt.Errorf("too young")
 					}
@@ -173,7 +173,7 @@ func BenchmarkTypeSwitchVsReflection(b *testing.B) {
 	products := make([]benchProduct, 100)
 	mixed := make([]any, 200)
 
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		users[i] = benchUser{ID: i, Age: 25}
 		products[i] = benchProduct{ID: i, Price: 10.99}
 		mixed[i*2] = users[i]
@@ -229,7 +229,7 @@ func BenchmarkTypeSwitchVsReflection(b *testing.B) {
 func BenchmarkMergedTrees(b *testing.B) {
 	users := make([]benchUser, 1000)
 	products := make([]benchProduct, 1000)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		users[i] = benchUser{ID: i, Email: "test@example.com", Age: 25}
 		products[i] = benchProduct{ID: i, Name: "Product", Price: 10.99}
 	}
@@ -237,7 +237,7 @@ func BenchmarkMergedTrees(b *testing.B) {
 	userTree := Node(
 		IsA[benchUser]("isUser"),
 		Rules(
-			NewTypedRule[benchUser]("checkEmail", func(ctx context.Context, u benchUser) error {
+			NewTypedRule("checkEmail", func(ctx context.Context, u benchUser) error {
 				if u.Email == "" {
 					return fmt.Errorf("email required")
 				}
@@ -249,7 +249,7 @@ func BenchmarkMergedTrees(b *testing.B) {
 	productTree := Node(
 		IsA[benchProduct]("isProduct"),
 		Rules(
-			NewTypedRule[benchProduct]("checkPrice", func(ctx context.Context, p benchProduct) error {
+			NewTypedRule("checkPrice", func(ctx context.Context, p benchProduct) error {
 				if p.Price <= 0 {
 					return fmt.Errorf("price must be positive")
 				}

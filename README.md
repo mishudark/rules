@@ -483,13 +483,13 @@ myCondition := rules.NewTypedCondition("isAdult", func(ctx context.Context, user
 Use this when you need to load data before evaluating the condition (e.g., database lookups, API calls):
 
 ```go
-myCondition := rules.NewTypedConditionWithPrepare[User, Permissions](
+myCondition := rules.NewTypedConditionWithPrepare(
     "userHasPermission",
     func(ctx context.Context, user User) (Permissions, error) {
         // Prepare: Load permissions from database
         return db.LoadPermissions(ctx, user.ID)
     },
-    func(ctx context.Context, perms Permissions) bool {
+    func(ctx context.Context, user User, perms Permissions) bool {
         // Evaluate: Check if user has edit permission
         return perms.CanEdit
     },
