@@ -695,9 +695,6 @@ Pure conditions skip the `Prepare` phase:
 rules.NewCondition("check", func(ctx context.Context) bool { ... })
 rules.NewTypedCondition[User]("isAdult", func(ctx context.Context, u User) bool { ... })
 
-// Impure - slower (always calls Prepare)
-rules.NewConditionImpure("check", func(ctx context.Context) bool { ... })
-
 // Impure with typed Prepare - for loading data before evaluation
 rules.NewTypedConditionWithPrepare[User, Permissions](
     "hasPermission",

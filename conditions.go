@@ -56,16 +56,6 @@ func NewCondition(name string, predicate func(ctx context.Context) bool) Conditi
 	}
 }
 
-// NewConditionImpure creates a condition that may have side effects (e.g., fetching data).
-// The pure flag is set to false, so Prepare will always be called before IsValid.
-func NewConditionImpure(name string, predicate func(ctx context.Context) bool) Condition {
-	return &ConditionFunc{
-		name:      name,
-		predicate: predicate,
-		pure:      false,
-	}
-}
-
 // typeChecker is an optimized condition that caches type information.
 // It uses reflection only once during construction for better performance.
 type typeChecker struct {
@@ -215,7 +205,7 @@ func IsNil(name string) Condition {
 			}
 			// Check if it's a nil interface with underlying nil value
 			v := reflect.ValueOf(data)
-			return v.Kind() == reflect.Ptr && v.IsNil()
+			return v.Kind() == reflect.Pointer && v.IsNil()
 		},
 		pure: true,
 	}
@@ -234,7 +224,7 @@ func IsNotNil(name string) Condition {
 				return false
 			}
 			v := reflect.ValueOf(data)
-			if v.Kind() == reflect.Ptr && v.IsNil() {
+			if v.Kind() == reflect.Pointer && v.IsNil() {
 				return false
 			}
 			return true
@@ -257,7 +247,7 @@ func HasField(name string, fieldName string) Condition {
 			v := reflect.ValueOf(data)
 
 			// Dereference pointer if needed
-			if v.Kind() == reflect.Ptr {
+			if v.Kind() == reflect.Pointer {
 				if v.IsNil() {
 					return false
 				}
@@ -293,7 +283,7 @@ func FieldEquals(name string, fieldName string, expected any) Condition {
 			v := reflect.ValueOf(data)
 
 			// Dereference pointer if needed
-			if v.Kind() == reflect.Ptr {
+			if v.Kind() == reflect.Pointer {
 				if v.IsNil() {
 					return false
 				}
