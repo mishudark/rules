@@ -331,7 +331,7 @@ func FieldEquals(name string, fieldName string, expected any) Condition {
 type TypedConditionWithPrepare[In any, T any] struct {
 	name       string
 	prepare    func(ctx context.Context, input In) (T, error)
-	condition  func(ctx context.Context, data T) bool
+	condition  func(ctx context.Context, input In, data T) bool
 	loadedData T
 	hasData    bool
 }
@@ -366,10 +366,16 @@ func (c *TypedConditionWithPrepare[In, T]) Name() string {
 
 // IsValid evaluates the condition using the data loaded during Prepare.
 func (c *TypedConditionWithPrepare[In, T]) IsValid(ctx context.Context) bool {
+	input, ok := GetAs[In](ctx)
+	if !ok {
+		return false
+	}
+
 	if !c.hasData {
 		return false
 	}
-	return c.condition(ctx, c.loadedData)
+
+	return c.condition(ctx, input, c.loadedData)
 }
 
 // IsPure returns false as this condition has side effects during Prepare.
@@ -401,19 +407,19 @@ func (c *TypedConditionWithPrepare[In, T]) IsPure() bool {
 //
 // Example:
 //
-//	condition := rules.NewTypedConditionWithPrepare[User, Permissions](
+//	condition := rules.NewTypedConditionWithPrepare(
 //	    "userHasPermission",
 //	    func(ctx context.Context, user User) (Permissions, error) {
 //	        return db.LoadPermissions(ctx, user.ID)
 //	    },
-//	    func(ctx context.Context, perms Permissions) bool {
+//	    func(ctx context.Context, user User, perms Permissions) bool {
 //	        return perms.CanEdit
 //	    },
 //	)
 func NewTypedConditionWithPrepare[In any, T any](
 	name string,
 	prepare func(ctx context.Context, input In) (T, error),
-	condition func(ctx context.Context, data T) bool,
+	condition func(ctx context.Context, input In, data T) bool,
 ) Condition {
 	return &TypedConditionWithPrepare[In, T]{
 		name:      name,
