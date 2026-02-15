@@ -1,5 +1,5 @@
 module github.com/mishudark/rules
 
-go 1.24.1
+go 1.26
 
-require golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0
+require golang.org/x/exp v0.0.0-20260212183809-81e46e3db34a
