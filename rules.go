@@ -799,97 +799,114 @@ func NewTypedCondition[T any](name string, fn func(ctx context.Context, data T) 
 
 // TypedRuleDataFunc is a rule with Prepare support and type-safe data access.
 // This allows rules to have side effects (e.g., fetching data) before validation.
-type TypedRuleDataFunc[T any] struct {
+type TypedRuleDataFunc[In any, T any] struct {
 	RuleBase
-	name    string
-	prepare func(ctx context.Context, data T) error
-	fn      func(ctx context.Context, data T) error
+	name       string
+	prepare    func(ctx context.Context, input In) (T, error)
+	fn         func(ctx context.Context, input In, data T) error
+	loadedData T
+	hasData    bool
 }
 
-var _ Rule = (*TypedRuleDataFunc[any])(nil)
+var _ Rule = (*TypedRuleDataFunc[any, any])(nil)
 
 // Name returns the rule name.
-func (r *TypedRuleDataFunc[T]) Name() string {
+func (r *TypedRuleDataFunc[In, T]) Name() string {
 	return r.name
 }
 
 // Prepare executes the prepare function with typed data.
-func (r *TypedRuleDataFunc[T]) Prepare(ctx context.Context) error {
+func (r *TypedRuleDataFunc[In, T]) Prepare(ctx context.Context) error {
 	data, ok := Get(ctx)
 	if !ok {
 		return Error{
 			Field: r.name,
-			Err:   "validation data not found in context",
-			Code:  "DATA_NOT_FOUND",
+			Err:   "validation input not found in context",
+			Code:  "INPUT_NOT_FOUND",
 		}
 	}
-	typed, ok := data.(T)
+	typed, ok := data.(In)
 	if !ok {
-		var zero T
+		var zero In
 		return Error{
 			Field: r.name,
 			Err:   fmt.Sprintf("expected data of type %T, got %T", zero, data),
 			Code:  "TYPE_MISMATCH",
 		}
 	}
-	if r.prepare != nil {
-		return r.prepare(ctx, typed)
+
+	if r.prepare == nil {
+		return nil
 	}
+
+	prepared, err := r.prepare(ctx, typed)
+	if err != nil {
+		return err
+	}
+
+	r.hasData = true
+	r.loadedData = prepared
 	return nil
 }
 
 // Validate executes the validation function with typed data.
-func (r *TypedRuleDataFunc[T]) Validate(ctx context.Context) error {
-	data, ok := Get(ctx)
+func (r *TypedRuleDataFunc[In, T]) Validate(ctx context.Context) error {
+	input, ok := Get(ctx)
 	if !ok {
 		return Error{
 			Field: r.name,
-			Err:   "validation data not found in context",
-			Code:  "DATA_NOT_FOUND",
+			Err:   "validation input not found in context",
+			Code:  "INPUT_NOT_FOUND",
 		}
 	}
-	typed, ok := data.(T)
+	typedInput, ok := input.(In)
 	if !ok {
 		var zero T
 		return Error{
 			Field: r.name,
-			Err:   fmt.Sprintf("expected data of type %T, got %T", zero, data),
+			Err:   fmt.Sprintf("expected input of type %T, got %T", zero, input),
 			Code:  "TYPE_MISMATCH",
 		}
 	}
-	return r.fn(ctx, typed)
+
+	if !r.hasData {
+		return Error{
+			Field: r.name,
+			Err:   "validation data from prepared not available",
+			Code:  "DATA_NOT_PREPARED",
+		}
+	}
+
+	return r.fn(ctx, typedInput, r.loadedData)
 }
 
 // NewTypedRuleWithPrepare creates a type-safe rule with Prepare support.
 // This is useful when you need to fetch additional data or perform side effects
 // before validation (e.g., checking a database, calling an API).
 //
+// ⚠️ IMPORTANT: This rule stores state (loadedData) and is NOT safe for concurrent
+// use. When validating multiple items concurrently, create one tree per target:
+//
 // Example:
 //
-//	rule := rules.NewTypedRuleWithPrepare[User](
+//	rule := rules.NewTypedRuleWithPrepare[User, Permissions](
 //	    "checkEmailUniqueness",
-//	    func(ctx context.Context, user User) error {
-//	        // Side effect: check database
-//	        exists, err := db.CheckEmailExists(ctx, user.Email)
-//	        if err != nil {
-//	            return err
-//	        }
-//	        if exists {
-//	            return fmt.Errorf("email already exists")
-//	        }
-//	        return nil
+//	    func(ctx context.Context, user User) (Permissions, error) {
+//	        return db.CheckEmailExists(ctx, user.Email)
 //	    },
-//	    nil, // No additional validation needed after prepare
+//	    func(ctx context.Context, user User, perms Permissions) bool {
+//	        return !perms.Exists
+//	    },
 //	)
-func NewTypedRuleWithPrepare[T any](
+func NewTypedRuleWithPrepare[In any, T any](
 	name string,
-	prepare func(ctx context.Context, data T) error,
-	validate func(ctx context.Context, data T) error,
+	prepare func(ctx context.Context, input In) (T, error),
+	validate func(ctx context.Context, input In, data T) error,
 ) Rule {
 	if validate == nil {
-		validate = func(ctx context.Context, data T) error { return nil }
+		validate = func(ctx context.Context, input In, data T) error { return nil }
 	}
-	return &TypedRuleDataFunc[T]{
+	return &TypedRuleDataFunc[In, T]{
 		name:    name,
 		prepare: prepare,
 		fn:      validate,
