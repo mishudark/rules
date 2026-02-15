@@ -423,7 +423,7 @@ myRule := rules.NewRule("myRule", func(ctx context.Context, data any) error {
 **Type-safe rule:**
 
 ```go
-myRule := rules.NewTypedRule[User]("myRule", func(ctx context.Context, user User) error {
+myRule := rules.NewTypedRule("myRule", func(ctx context.Context, user User) error {
     if user.Disabled {
         return fmt.Errorf("user is disabled")
     }
@@ -436,24 +436,21 @@ myRule := rules.NewTypedRule[User]("myRule", func(ctx context.Context, user User
 Use this when you need side effects before validation (e.g., database checks, API calls):
 
 ```go
-myRule := rules.NewTypedRuleWithPrepare[User](
+myRule := rules.NewTypedRuleWithPrepare(
     "checkEmailUnique",
-    func(ctx context.Context, user User) error {
-        // Prepare: Check database for existing email
-        exists, err := db.EmailExists(ctx, user.Email)
-        if err != nil {
-            return err
-        }
-        if exists {
-            return fmt.Errorf("email already exists")
-        }
-        return nil
+    func(ctx context.Context, user User) (StoredData, error) {
+        return db.EmailData(ctx, user.Email)
     },
-    func(ctx context.Context, user User) error {
-        // Validate: Additional validation after prepare
+    func(ctx context.Context, user User, data StoredData  ) error {
         if !strings.Contains(user.Email, "@") {
             return fmt.Errorf("invalid email format")
         }
+
+        // Validate uniqueness using prepared data
+        if data.Exists {
+            return fmt.Errorf("email already in use")
+        }
+
         return nil
     },
 )
@@ -476,7 +473,7 @@ myCondition := rules.NewCondition("isAdmin", func(ctx context.Context) bool {
 **Type-safe condition:**
 
 ```go
-myCondition := rules.NewTypedCondition[User]("isAdult", func(ctx context.Context, user User) bool {
+myCondition := rules.NewTypedCondition("isAdult", func(ctx context.Context, user User) bool {
     return user.Age >= 18
 })
 ```

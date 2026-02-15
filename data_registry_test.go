@@ -79,7 +79,7 @@ func TestValidateWithData(t *testing.T) {
 	tree := Node(
 		IsA[testUser]("isUser"),
 		Rules(
-			NewTypedRule[testUser]("checkAge", func(ctx context.Context, user testUser) error {
+			NewTypedRule("checkAge", func(ctx context.Context, user testUser) error {
 				if user.Age < 18 {
 					return fmt.Errorf("must be 18 or older")
 				}
@@ -223,7 +223,7 @@ func TestNewTypedRule(t *testing.T) {
 	t.Parallel()
 
 	tree := Rules(
-		NewTypedRule[testUser]("checkName", func(ctx context.Context, user testUser) error {
+		NewTypedRule("checkName", func(ctx context.Context, user testUser) error {
 			if len(user.Name) < 2 {
 				return fmt.Errorf("name must be at least 2 characters")
 			}
@@ -256,7 +256,7 @@ func TestNewTypedRule(t *testing.T) {
 func TestNewTypedCondition(t *testing.T) {
 	t.Parallel()
 
-	condition := NewTypedCondition[testUser]("isAdult", func(ctx context.Context, user testUser) bool {
+	condition := NewTypedCondition("isAdult", func(ctx context.Context, user testUser) bool {
 		return user.Age >= 18
 	})
 
@@ -289,7 +289,7 @@ func TestCrossPackageTreeComposition(t *testing.T) {
 	userTree := Node(
 		IsA[testUser]("isUser"),
 		Rules(
-			NewTypedRule[testUser]("userRule", func(ctx context.Context, u testUser) error {
+			NewTypedRule("userRule", func(ctx context.Context, u testUser) error {
 				if u.Email == "" {
 					return fmt.Errorf("user email required")
 				}
@@ -301,7 +301,7 @@ func TestCrossPackageTreeComposition(t *testing.T) {
 	productTree := Node(
 		IsA[testProduct]("isProduct"),
 		Rules(
-			NewTypedRule[testProduct]("productRule", func(ctx context.Context, p testProduct) error {
+			NewTypedRule("productRule", func(ctx context.Context, p testProduct) error {
 				if p.Price <= 0 {
 					return fmt.Errorf("product price must be positive")
 				}
@@ -346,7 +346,7 @@ func TestValidateMultiWithData(t *testing.T) {
 	t.Parallel()
 
 	tree := Rules(
-		NewTypedRule[testUser]("checkAge", func(ctx context.Context, u testUser) error {
+		NewTypedRule("checkAge", func(ctx context.Context, u testUser) error {
 			if u.Age < 18 {
 				return fmt.Errorf("must be 18+")
 			}
@@ -392,19 +392,24 @@ func TestNewTypedRuleWithPrepare(t *testing.T) {
 	prepareCalled := false
 	validateCalled := false
 
-	rule := NewTypedRuleWithPrepare[testUser](
+	rule := NewTypedRuleWithPrepare(
 		"checkUser",
-		func(ctx context.Context, user testUser) error {
+		func(ctx context.Context, user testUser) (string, error) {
 			prepareCalled = true
+			// in real use case, this could be a call to an external service or complex computation
 			if user.Email == "" {
-				return fmt.Errorf("prepare: email required")
+				return "", fmt.Errorf("prepare: email is required")
 			}
-			return nil
+			return user.Email, nil
 		},
-		func(ctx context.Context, user testUser) error {
+		func(ctx context.Context, user testUser, email string) error {
 			validateCalled = true
 			if user.Age < 18 {
 				return fmt.Errorf("validate: must be 18+")
+			}
+
+			if email == "" {
+				return fmt.Errorf("validate: email is required")
 			}
 			return nil
 		},
@@ -463,16 +468,22 @@ func TestNewTypedRuleWithPrepare(t *testing.T) {
 		t.Error("validate should have been called")
 	}
 
+	type nop struct{}
 	// Test with nil validate function (uses default no-op)
-	ruleNoValidate := NewTypedRuleWithPrepare[testUser](
+	ruleNoValidate := NewTypedRuleWithPrepare(
 		"prepareOnly",
-		func(ctx context.Context, user testUser) error {
-			return nil
+		func(ctx context.Context, user testUser) (nop, error) {
+			return nop{}, nil
 		},
 		nil,
 	)
 
 	ctx = WithRegistry(context.Background(), NewDataRegistry(user))
+	err = ruleNoValidate.Prepare(ctx)
+	if err != nil {
+		t.Error("unexpected error for type mismatch in prepare")
+	}
+
 	err = ruleNoValidate.Validate(ctx)
 	if err != nil {
 		t.Errorf("unexpected error with nil validate: %v", err)
@@ -482,12 +493,12 @@ func TestNewTypedRuleWithPrepare(t *testing.T) {
 func TestNewTypedRuleWithPrepare_TypeMismatch(t *testing.T) {
 	t.Parallel()
 
-	rule := NewTypedRuleWithPrepare[testUser](
+	rule := NewTypedRuleWithPrepare(
 		"checkUser",
-		func(ctx context.Context, user testUser) error {
-			return nil
+		func(ctx context.Context, user testUser) (struct{}, error) {
+			return struct{}{}, nil
 		},
-		func(ctx context.Context, user testUser) error {
+		func(ctx context.Context, user testUser, data struct{}) error {
 			return nil
 		},
 	)
@@ -510,12 +521,12 @@ func TestNewTypedRuleWithPrepare_TypeMismatch(t *testing.T) {
 func TestNewTypedRuleWithPrepare_NoData(t *testing.T) {
 	t.Parallel()
 
-	rule := NewTypedRuleWithPrepare[testUser](
+	rule := NewTypedRuleWithPrepare(
 		"checkUser",
-		func(ctx context.Context, user testUser) error {
-			return nil
+		func(ctx context.Context, user testUser) (struct{}, error) {
+			return struct{}{}, nil
 		},
-		func(ctx context.Context, user testUser) error {
+		func(ctx context.Context, user testUser, data struct{}) error {
 			return nil
 		},
 	)
