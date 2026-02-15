@@ -28,7 +28,7 @@ tree := rules.Node(
     rules.Rules(validators.MinValue("age", user.Age, 21)),
 )
 
-err := rules.Validate(context.Background(), tree, rules.ProcessingHooks{}, "check")
+err := rules.ValidateWithData(context.Background(), tree, rules.ProcessingHooks{}, "check", user)
 // err == nil
 ```
 
@@ -54,6 +54,31 @@ tree := rules.Node(
 for _, user := range users {
     err := rules.ValidateWithData(ctx, tree, hooks, "ageCheck", user)
 }
+```
+
+### Multiple rules (all must pass)
+
+Pass multiple rules to `Rules()` — all of them must pass:
+
+```go
+tree := rules.Rules(
+    validators.MinValue("age", 25, 18),
+    validators.MaxValue("age", 25, 65),
+    validators.Email("email", "user@example.com", nil),
+)
+```
+
+### At least one rule must pass
+
+Use `Or()` when at least one rule should pass:
+
+```go
+tree := rules.Rules(
+    rules.Or(
+        validators.Email("contact", "user@example.com", nil),
+        validators.ValidDomainNameAdvanced("contact", "example.com", false),
+    ),
+)
 ```
 
 ---
@@ -111,90 +136,9 @@ func ProcessUsers(users []User) []error {
 }
 ```
 
-### Type switching in reusable trees
-
-Merge trees for different types and let runtime type checks route to the right rules:
-
-```go
-// Build merged tree for multiple types
-var mergedTree = rules.Root(
-    rules.Node(
-        rules.IsA[User]("isUser"),
-        rules.Rules(userRules...),
-    ),
-    rules.Node(
-        rules.IsA[Product]("isProduct"),
-        rules.Rules(productRules...),
-    ),
-    rules.Node(
-        rules.IsA[Order]("isOrder"),
-        rules.Rules(orderRules...),
-    ),
-)
-
-// Works with any of the registered types
-rules.ValidateWithData(ctx, mergedTree, hooks, "validate", user)
-rules.ValidateWithData(ctx, mergedTree, hooks, "validate", product)
-rules.ValidateWithData(ctx, mergedTree, hooks, "validate", order)
-```
-
-### Manual registry usage
-
-For more control over context creation:
-
-```go
-// Create registry and attach to context
-reg := rules.NewDataRegistry(user)
-ctx := rules.WithRegistry(context.Background(), reg)
-
-// Use standard Validate (requires registry in context)
-err := rules.Validate(ctx, tree, hooks, "validate")
-
-// Or access data directly in custom rules/conditions
-user, ok := rules.GetAs[User](ctx)
-```
-
-### Batch validation
-
-Validate multiple items efficiently with `ValidateMultiWithData`:
-
-```go
-// Validate many users against the same tree
-targets := []rules.TreeAndData{
-    {Tree: userTree, Data: user1},
-    {Tree: userTree, Data: user2},
-    {Tree: productTree, Data: product1}, // Can use different trees
-}
-
-err := rules.ValidateMultiWithData(ctx, targets, hooks, "batch")
-```
-
 ---
 
-### Multiple rules (all must pass)
-
-Pass multiple rules to `Rules()` — all of them must pass:
-
-```go
-tree := rules.Rules(
-    validators.MinValue("age", 25, 18),
-    validators.MaxValue("age", 25, 65),
-    validators.Email("email", "user@example.com", nil),
-)
-```
-
-### At least one rule must pass
-
-Use `Or()` when at least one rule should pass:
-
-```go
-tree := rules.Rules(
-    rules.Or(
-        validators.Email("contact", "user@example.com", nil),
-        validators.ValidDomainNameAdvanced("contact", "example.com", false),
-    ),
-)
-```
+## Conditional Logic
 
 ### Either/Then (if-else)
 
@@ -214,9 +158,38 @@ tree := rules.Either(
 )
 ```
 
+### Complex Conditional Trees
+
+Combine multiple conditions into sophisticated validation logic:
+
+```go
+tree := rules.Root(
+    // Always require valid email
+    rules.Rules(validators.Email("email", user.Email, nil)),
+    
+    // Premium users: age 18+ AND valid website
+    rules.Node(
+        rules.NewConditionPure("isPremium", func() bool { return user.Plan == "premium" }),
+        rules.Rules(
+            validators.MinValue("age", user.Age, 18),
+            validators.URL(user.Website, []string{"https"}),
+        ),
+    ),
+    
+    // Free users: age 13+ AND valid country
+    rules.Node(
+        rules.NewConditionPure("isFree", func() bool { return user.Plan == "free" }),
+        rules.Rules(
+            validators.MinValue("age", user.Age, 13),
+            validators.ValidDomainNameAdvanced("country", user.Country, false),
+        ),
+    ),
+)
+```
+
 ### Cross-package tree composition with type switching
 
-Build rules in separate packages and merge them at runtime:
+Build rules in separate packages and merge them at runtime. Runtime type checks route validation to the appropriate rules:
 
 ```go
 // package userrules/user_rules.go
@@ -260,54 +233,6 @@ func main() {
     rules.ValidateWithData(ctx, mergedTree, hooks, "validate", user)
     rules.ValidateWithData(ctx, mergedTree, hooks, "validate", product)
 }
-```
-
-### Nested logic
-
-Combine conditions into complex trees:
-
-```go
-tree := rules.Root(
-    // IF user is premium
-    rules.Node(
-        rules.NewConditionPure("isPremium", func() bool { return user.IsPremium }),
-        // THEN require email verification
-        rules.Rules(validators.Email("email", user.Email, nil)),
-    ),
-    // IF user is NOT premium
-    rules.Node(
-        rules.NewConditionPure("isNotPremium", func() bool { return !user.IsPremium }),
-        // THEN just check minimum age
-        rules.Rules(validators.MinValue("age", user.Age, 13)),
-    ),
-)
-```
-
-### More complex nesting
-
-```go
-tree := rules.Root(
-    rules.Rules(validators.Email("email", user.Email, nil)),
-    
-    // Premium users: age 18+ AND valid website
-    rules.Node(
-        rules.NewConditionPure("isPremium", func() bool { return user.Plan == "premium" }),
-        rules.Rules(
-            validators.MinValue("age", user.Age, 18),
-            validators.URL(user.Website, []string{"https"}),
-        ),
-    ),
-    
-    // Free users: age 13+ AND valid country
-    rules.Node(
-        rules.NewConditionPure("isFree", func() bool { return user.Plan == "free" }),
-        rules.Rules(
-            validators.MinValue("age", user.Age, 13),
-            validators.ValidDomainNameAdvanced("country", user.Country, false),
-        ),
-    ),
-)
-```
 
 ---
 
@@ -411,7 +336,7 @@ func ValidateRegistration(ctx context.Context, req RegistrationRequest) error {
         ),
     )
     
-    return rules.Validate(ctx, tree, rules.ProcessingHooks{}, "registration")
+    return rules.ValidateWithData(ctx, tree, rules.ProcessingHooks{}, "registration", req)
 }
 
 func main() {
@@ -468,7 +393,6 @@ func main() {
 | `rules.NewCondition(name, fn)` | Creates a data-driven condition (pure) |
 | `rules.NewTypedCondition[T](name, fn)` | Creates a type-safe condition (pure) |
 | `rules.NewTypedConditionWithPrepare[In, T](name, prepare, condition)` | Creates a type-safe condition with Prepare (impure) |
-| `rules.NewConditionImpure(name, fn)` | Creates a condition with side effects (impure) |
 
 ### Runtime Type Conditions
 
