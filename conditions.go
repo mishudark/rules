@@ -149,20 +149,34 @@ func IsAssignableTo[T any](name string) Condition {
 }
 
 // FastIsA returns a condition that uses type assertion for the check.
-// This is faster than IsA but only works when you can provide a prototype value.
+// This is faster than IsA because it avoids reflection by using generics.
 // Use this for high-throughput scenarios.
 //
 // Example:
 //
-//	var prototype User
-//	condition := rules.FastIsA("isUser", prototype)
-func FastIsA(name string, prototype any) Condition {
-	targetType := reflect.TypeOf(prototype)
-	return &typeChecker{
-		name:       name,
-		targetType: targetType,
-	}
+//	condition := rules.FastIsA[User]("isUser")
+func FastIsA[T any](name string) Condition {
+	return &genericChecker[T]{name: name}
 }
+
+// genericChecker is a type-safe condition checker using type assertion.
+type genericChecker[T any] struct {
+	name string
+}
+
+func (c *genericChecker[T]) Prepare(ctx context.Context) error { return nil }
+func (c *genericChecker[T]) Name() string                      { return c.name }
+func (c *genericChecker[T]) IsValid(ctx context.Context) bool {
+	data, ok := Get(ctx)
+	if !ok {
+		return false
+	}
+	_, ok = data.(T)
+	return ok
+}
+func (c *genericChecker[T]) IsPure() bool { return true }
+
+var _ Condition = (*genericChecker[any])(nil)
 
 // FastTypeSwitch creates a condition using a type switch for maximum performance.
 // Use this when you need to check against multiple types in a high-throughput scenario.

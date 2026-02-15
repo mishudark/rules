@@ -39,7 +39,7 @@ Build the tree once, reuse it with different data:
 ```go
 // Build tree once (can be done at init or in a separate package)
 tree := rules.Node(
-    rules.IsA[User]("isUser"),  // Runtime type check
+    rules.FastIsA[User]("isUser"),  // Runtime type check
     rules.Rules(
         rules.NewTypedRule[User]("checkAge", func(ctx context.Context, user User) error {
             if user.Age < 21 {
@@ -105,7 +105,7 @@ This is the **recommended pattern** for most use cases. Build validation trees o
 ```go
 // Step 1: Build tree once (can be in a separate package)
 var userValidationTree = rules.Node(
-    rules.IsA[User]("isUser"),
+    rules.FastIsA[User]("isUser"),
     rules.Rules(
         rules.NewTypedRule[User]("checkAge", func(ctx context.Context, u User) error {
             if u.Age < 18 {
@@ -197,7 +197,7 @@ type User struct { Name string; Age int }
 
 func UserRules() rules.Evaluable {
     return rules.Node(
-        rules.IsA[User]("isUser"),
+        rules.FastIsA[User]("isUser"),
         rules.Rules(
             rules.NewTypedRule[User]("checkAge", func(ctx context.Context, u User) error {
                 if u.Age < 18 { return fmt.Errorf("too young") }
@@ -212,7 +212,7 @@ type Product struct { Name string; Price float64 }
 
 func ProductRules() rules.Evaluable {
     return rules.Node(
-        rules.IsA[Product]("isProduct"),
+        rules.FastIsA[Product]("isProduct"),
         rules.Rules(
             rules.NewTypedRule[Product]("checkPrice", func(ctx context.Context, p Product) error {
                 if p.Price <= 0 { return fmt.Errorf("invalid price") }
@@ -241,7 +241,7 @@ func main() {
 Use these conditions for type switching in merged trees:
 
 ```go
-rules.IsA[User]("isUser")                    // Exact type match
+rules.FastIsA[User]("isUser")                    // Exact type match
 rules.IsAssignableTo[Named]("isNamed")       // Interface implementation
 rules.IsNil("isNil")                         // Nil check
 rules.IsNotNil("hasData")                    // Non-nil check
@@ -391,6 +391,7 @@ func main() {
 | `rules.NewTypedRule[T](name, fn)` | Creates a type-safe rule (pure) |
 | `rules.NewTypedRuleWithPrepare[T](name, prepare, validate)` | Creates a type-safe rule with Prepare (impure) |
 | `rules.NewCondition(name, fn)` | Creates a data-driven condition (pure) |
+| `rules.NewConditionSideEffect(name, prepare, condition)` | Creates a condition with side effects (impure) |
 | `rules.NewTypedCondition[T](name, fn)` | Creates a type-safe condition (pure) |
 | `rules.NewTypedConditionWithPrepare[In, T](name, prepare, condition)` | Creates a type-safe condition with Prepare (impure) |
 
@@ -399,7 +400,7 @@ func main() {
 | Function | What it does |
 |----------|--------------|
 | `rules.IsA[T]("name")` | True if data is exactly type T (uses reflection, ~6ns) |
-| `rules.FastIsA("name", prototype)` | Same as IsA but with explicit prototype (same speed) |
+| `rules.FastIsA[T]("name")` | Same as IsA but uses type assertion (~1-2ns), faster |
 | `rules.FastTypeSwitch("name", fn)` | Type check using type switch (flexible, fast) |
 | `rules.IsAssignableTo[T]("name")` | True if data can be assigned to T |
 | `rules.IsNil("name")` | True if data is nil |
@@ -657,8 +658,6 @@ go get github.com/mishudark/rules
 
 2. **Use closures for one-off validations** — For simple, single-use validations, `NewRulePure` and `NewConditionPure` are fine.
 
-3. **Use `IsA[T]` for type switching** — When merging trees from different packages, use `IsA[YourType]()` to route validation correctly.
+3. **Use `FastIsA[T]` for type switching** — When merging trees from different packages, use `FastIsA[YourType]('isYourType')` to route validation correctly.
 
 4. **Prefer type-safe rules when possible** — `NewTypedRule[T]` gives you compile-time type safety within the rule function.
-
-5. **Use schema validators for struct validation** — `validators.Schema` with field validators provides clean, declarative struct validation.

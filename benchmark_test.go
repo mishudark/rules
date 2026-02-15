@@ -31,9 +31,8 @@ func BenchmarkConditionTypeCheck(b *testing.B) {
 		}
 	})
 
-	b.Run("FastIsA_with_reflection", func(b *testing.B) {
-		var prototype benchUser
-		cond := FastIsA("isUser", prototype)
+	b.Run("FastIsA_generic", func(b *testing.B) {
+		cond := FastIsA[benchUser]("isUser")
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			_ = cond.IsValid(ctx)
