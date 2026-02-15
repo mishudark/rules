@@ -280,7 +280,6 @@ Here's what you can validate out of the box:
 | `ProhibitNullCharacters` | Strings without null chars |
 | `Slug` | URL-friendly slugs |
 | `StepValue` | Values in increments |
-| `Schema` | Struct field validation (with data registry) |
 | `RequiredField` | Required field validation |
 | `MinValueField` / `MaxValueField` | Numeric field validation |
 | `MinLengthField` / `MaxLengthField` | Length field validation |
@@ -606,7 +605,6 @@ For 1000s of evaluations per second:
 1. **`IsA[T]()` is optimized** — It caches the target type, making reflection overhead negligible (~6ns)
 2. **Use `ValidateMulti`** — Batch validations to amortize context creation cost
 3. **Avoid deep nesting** — Each level adds overhead; flatten where possible
-4. **Prefer direct field access** — Use `NewTypedRule` instead of `validators.Schema` for hot paths
 
 See [PERFORMANCE.md](PERFORMANCE.md) for detailed benchmarks and optimization guides.
 
