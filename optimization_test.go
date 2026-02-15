@@ -49,7 +49,7 @@ func TestPureConditionPruning(t *testing.T) {
 	// Case 1: Pure condition returns false. Children should NOT be prepared.
 	t.Run("PureFalse_PrunesChildren", func(t *testing.T) {
 		child := &MockEvaluable{}
-		condition := NewConditionPure("pureFalse", func() bool { return false })
+		condition := NewCondition("pureFalse", func(ctx context.Context) bool { return false })
 
 		node := Node(condition, child)
 		err := node.PrepareConditions(ctx)
@@ -65,7 +65,7 @@ func TestPureConditionPruning(t *testing.T) {
 	// Case 2: Pure condition returns true. Children SHOULD be prepared.
 	t.Run("PureTrue_PreparesChildren", func(t *testing.T) {
 		child := &MockEvaluable{}
-		condition := NewConditionPure("pureTrue", func() bool { return true })
+		condition := NewCondition("pureTrue", func(ctx context.Context) bool { return true })
 
 		node := Node(condition, child)
 		err := node.PrepareConditions(ctx)
@@ -101,7 +101,7 @@ func TestPureConditionPruning(t *testing.T) {
 }
 
 func TestNotConditionIsPure(t *testing.T) {
-	pure := NewConditionPure("pure", func() bool { return true })
+	pure := NewCondition("pure", func(ctx context.Context) bool { return true })
 	impure := &MockImpureCondition{name: "impure"}
 
 	if !Not(pure).IsPure() {
@@ -119,7 +119,7 @@ func TestExistingFunctionality(t *testing.T) {
 		return nil
 	})
 
-	condition := NewConditionPure("true", func() bool { return true })
+	condition := NewCondition("true", func(ctx context.Context) bool { return true })
 	node := Node(condition, Rules(rule))
 
 	ctx := context.Background()
