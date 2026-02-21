@@ -1,16 +1,16 @@
 package validators
 
 import (
+	"cmp"
 	"fmt"
 
 	"github.com/mishudark/rules"
-	"golang.org/x/exp/constraints"
 )
 
 // MaxValue creates a validation Rule that checks if a given numeric value
 // is less than or equal to a specified maximum value.
 // It uses generics to work with any ordered type (int, float64, etc.).
-func MaxValue[T constraints.Ordered](fieldName string, value T, maxValue T) rules.Rule {
+func MaxValue[T cmp.Ordered](fieldName string, value T, maxValue T) rules.Rule {
 	ruleName := fmt.Sprintf("RuleMaxValue[%s]", fieldName)
 
 	return rules.NewRulePure(ruleName, func() error {
