@@ -1,16 +1,16 @@
 package validators
 
 import (
+	"cmp"
 	"fmt"
 
 	"github.com/mishudark/rules"
-	"golang.org/x/exp/constraints"
 )
 
 // MinValue creates a validation Rule that checks if a given numeric value
 // is more than or equal to a specified minimum value.
 // It uses generics to work with any ordered type (int, float64, etc.).
-func MinValue[T constraints.Ordered](fieldName string, value T, minValue T) rules.Rule {
+func MinValue[T cmp.Ordered](fieldName string, value T, minValue T) rules.Rule {
 	ruleName := fmt.Sprintf("RuleMinValue[%s]", fieldName)
 
 	return rules.NewRulePure(ruleName, func() error {
