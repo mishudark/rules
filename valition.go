@@ -6,7 +6,8 @@ import (
 )
 
 // Hook is called after each step of the validation process.
-type Hook func(ctx context.Context)
+// It receives the current context and can return an error to halt validation.
+type Hook func(ctx context.Context) error
 
 // ProcessingHooks holds the hooks for each step of the validation process.
 type ProcessingHooks struct {
@@ -40,13 +41,30 @@ func ValidateMulti(ctx context.Context, targets []Target, hooks ProcessingHooks,
 		// Prepare the conditions for evaluation
 		err := target.tree.PrepareConditions(target.ctx)
 		if err != nil {
-			// If trere is an error, return immediately
+			// If there is an error, return immediately
 			return errors.Join(err)
 		}
 	}
 
 	if hooks.AfterPrepareConditions != nil {
-		hooks.AfterPrepareConditions(ctx)
+		if err := hooks.AfterPrepareConditions(ctx); err != nil {
+			return errors.Join(err)
+		}
+	}
+
+	// evaluatedRules is a map of target index to rules from evaluation
+	evaluatedRules := make(map[int][]Rule)
+
+	for i, target := range targets {
+		// Evaluate the tree and get candidate rules
+		_, rules := target.tree.Evaluate(target.ctx, name)
+		evaluatedRules[i] = rules
+	}
+
+	if hooks.AfterEvaluateConditions != nil {
+		if err := hooks.AfterEvaluateConditions(ctx); err != nil {
+			return errors.Join(err)
+		}
 	}
 
 	// rules is a map of target index to prepared rules
@@ -56,15 +74,13 @@ func ValidateMulti(ctx context.Context, targets []Target, hooks ProcessingHooks,
 	// rulesCounter is used to count the number of rules
 	rulesCounter := 0
 
-	for i, target := range targets {
-		// Evaluate the tree and get candidate rules
-		_, rules := target.tree.Evaluate(target.ctx, name)
-
+	for i := range targets {
 		// prepare the rule for evaluation
-		for _, rule := range rules {
-			preparedRules[i] = make([]Rule, 0, len(rules))
+		rules := evaluatedRules[i]
+		preparedRules[i] = make([]Rule, 0, len(rules))
 
-			err := rule.Prepare(target.ctx)
+		for _, rule := range rules {
+			err := rule.Prepare(targets[i].ctx)
 			if err != nil {
 				// If the rule is not valid, append the error and continue
 				errs = append(errs, err)
@@ -77,25 +93,29 @@ func ValidateMulti(ctx context.Context, targets []Target, hooks ProcessingHooks,
 		}
 	}
 
-	if hooks.AfterEvaluateConditions != nil {
-		hooks.AfterEvaluateConditions(ctx)
+	if hooks.AfterPrepareRules != nil {
+		if err := hooks.AfterPrepareRules(ctx); err != nil {
+			return errors.Join(err)
+		}
 	}
 
 	// assign the length of the prepared rules to the slice
 	errs = make([]error, 0, rulesCounter)
 
-	for i, target := range targets {
+	for i := range targets {
 		// Validate prepared rules
 		for _, rule := range preparedRules[i] {
-			err := rule.Validate(target.ctx)
+			err := rule.Validate(targets[i].ctx)
 			if err != nil {
 				errs = append(errs, err)
 			}
 		}
 	}
 
-	if hooks.AfterPrepareRules != nil {
-		hooks.AfterPrepareRules(ctx)
+	if hooks.AfterValidateRules != nil {
+		if err := hooks.AfterValidateRules(ctx); err != nil {
+			return errors.Join(err)
+		}
 	}
 
 	return errors.Join(errs...)
@@ -114,14 +134,18 @@ func Validate(ctx context.Context, tree Evaluable, hooks ProcessingHooks, name s
 	}
 
 	if hooks.AfterPrepareConditions != nil {
-		hooks.AfterPrepareConditions(ctx)
+		if err := hooks.AfterPrepareConditions(ctx); err != nil {
+			return errors.Join(err)
+		}
 	}
 
 	// Evaluate the tree and get candidate rules
 	_, rules := tree.Evaluate(ctx, name)
 
 	if hooks.AfterEvaluateConditions != nil {
-		hooks.AfterEvaluateConditions(ctx)
+		if err := hooks.AfterEvaluateConditions(ctx); err != nil {
+			return errors.Join(err)
+		}
 	}
 
 	// create slices to hold errors and prepared rules
@@ -142,7 +166,9 @@ func Validate(ctx context.Context, tree Evaluable, hooks ProcessingHooks, name s
 	}
 
 	if hooks.AfterPrepareRules != nil {
-		hooks.AfterPrepareRules(ctx)
+		if err := hooks.AfterPrepareRules(ctx); err != nil {
+			return errors.Join(err)
+		}
 	}
 
 	// Validate prepared rules
@@ -154,7 +180,9 @@ func Validate(ctx context.Context, tree Evaluable, hooks ProcessingHooks, name s
 	}
 
 	if hooks.AfterValidateRules != nil {
-		hooks.AfterValidateRules(ctx)
+		if err := hooks.AfterValidateRules(ctx); err != nil {
+			return errors.Join(err)
+		}
 	}
 
 	return errors.Join(errs...)
