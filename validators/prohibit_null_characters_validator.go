@@ -15,7 +15,7 @@ func prohibitNullCharactersValidator(value string) error {
 	return nil
 }
 
-// NewProhibitNullCharactersValidator returns a new Rule that validates if a string
+// ProhibitNullCharacters returns a new Rule that validates if a string
 // contains any null characters.
 func ProhibitNullCharacters(value string) rules.Rule {
 	return rules.NewRulePure("prohibit_null_characters_validator", func() error {

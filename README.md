@@ -555,7 +555,7 @@ tree := rules.Node(
             return user.Active
         },
     ),
-    rules.Rules(validators.RuleValidEmail("email", user.Email, nil)),
+    rules.Rules(validators.Email("email", user.Email, nil)),
 )
 ```
 

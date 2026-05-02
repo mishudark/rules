@@ -37,7 +37,7 @@ func stepValueValidator[T number](value, step, offset T) error {
 	return nil
 }
 
-// NewStepValue returns a new Rule that validates if a number is a multiple of a given step.
+// StepValue returns a new Rule that validates if a number is a multiple of a given step.
 func StepValue[T number](value T, step, offset T) rules.Rule {
 	return rules.NewRulePure("step_value_validator", func() error {
 		return stepValueValidator(value, step, offset)

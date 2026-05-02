@@ -8,7 +8,7 @@ import (
 	"github.com/mishudark/rules"
 )
 
-// RuleValidEmail creates a validation Rule that checks if a given string
+// Email creates a validation Rule that checks if a given string
 // is a valid email address according to RFC 5322 format.
 // It uses Go's standard library `net/mail.ParseAddress`.
 // Note: This rule checks format only. It does not check if the domain exists or if the mailbox is active.

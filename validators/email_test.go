@@ -80,14 +80,14 @@ func TestRuleValidEmail(t *testing.T) {
 			err := rule.Validate(context.Background())
 
 			if (err != nil) != tc.wantErr {
-				t.Errorf("RuleValidEmail() error = %v, wantErr %v", err, tc.wantErr)
+				t.Errorf("Email() error = %v, wantErr %v", err, tc.wantErr)
 				return
 			}
 
 			if tc.wantErr {
 				if e, ok := err.(rules.Error); ok {
 					if e.Code != tc.errCode {
-						t.Errorf("RuleValidEmail() errorCode = %s, wantCode %s", e.Code, tc.errCode)
+						t.Errorf("Email() errorCode = %s, wantCode %s", e.Code, tc.errCode)
 					}
 				} else {
 					t.Errorf("Expected a custom Error type, but got %T", err)
