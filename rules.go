@@ -549,7 +549,7 @@ func (r *RulePure) Validate(ctx context.Context) error {
 	return r.rule()
 }
 
-// NewRulePure is a constructor function that creates and returns a new
+// NewRulePure is a constructor function that creates and returns a new RulePure.
 func NewRulePure(name string, rule func() error) Rule {
 	return &RulePure{
 		name: name,
@@ -644,7 +644,7 @@ func (c *ConditionPure) IsPure() bool {
 	return true
 }
 
-// NewConditionPure  function that creates and returns a new ConditionPure.
+// NewConditionPure is a constructor function that creates and returns a new ConditionPure.
 func NewConditionPure(name string, condition func() bool) Condition {
 	return &ConditionPure{
 		name:      name,
