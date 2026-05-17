@@ -14,7 +14,10 @@ func validateCommaSeparatedIntegerList(value string) error {
 	for part := range parts {
 		trimmedPart := strings.TrimSpace(part)
 		if _, err := strconv.Atoi(trimmedPart); err != nil {
-			return fmt.Errorf("'%s' is not a valid integer in the list", trimmedPart)
+			return rules.Error{
+				Code: "INVALID_COMMA_SEPARATED_INTEGER_LIST",
+				Err:  fmt.Sprintf("'%s' is not a valid integer in the list", trimmedPart),
+			}
 		}
 	}
 	return nil

@@ -19,7 +19,10 @@ type number interface {
 // It uses a small tolerance for floating-point comparisons.
 func stepValueValidator[T number](value, step, offset T) error {
 	if step == 0 {
-		return fmt.Errorf("step cannot be zero")
+		return rules.Error{
+			Code: "STEP_VALUE_ZERO",
+			Err:  "step cannot be zero",
+		}
 	}
 
 	valFloat := float64(value)
@@ -31,7 +34,10 @@ func stepValueValidator[T number](value, step, offset T) error {
 	// Use a small tolerance for floating point comparisons
 	tolerance := 1e-9
 	if math.Abs(remainder) > tolerance && math.Abs(remainder-stepFloat) > tolerance {
-		return fmt.Errorf("value %v is not a multiple of step %v (with offset %v)", value, step, offset)
+		return rules.Error{
+			Code: "STEP_VALUE_INVALID",
+			Err:  fmt.Sprintf("value %v is not a multiple of step %v (with offset %v)", value, step, offset),
+		}
 	}
 
 	return nil

@@ -13,7 +13,7 @@ This repository implements a flexible **rule engine** in Go for creating and eva
 - **Reusable validation** — build rule trees once, validate against different data
 
 **Module**: `github.com/mishudark/rules`  
-**Go Version**: 1.24.1  
+**Go Version**: 1.26  
 **Dependency**: `golang.org/x/exp`
 
 ## 2. Essential Commands

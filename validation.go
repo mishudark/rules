@@ -42,13 +42,13 @@ func ValidateMulti(ctx context.Context, targets []Target, hooks ProcessingHooks,
 		err := target.tree.PrepareConditions(target.ctx)
 		if err != nil {
 			// If there is an error, return immediately
-			return errors.Join(err)
+			return err
 		}
 	}
 
 	if hooks.AfterPrepareConditions != nil {
 		if err := hooks.AfterPrepareConditions(ctx); err != nil {
-			return errors.Join(err)
+			return err
 		}
 	}
 
@@ -63,7 +63,7 @@ func ValidateMulti(ctx context.Context, targets []Target, hooks ProcessingHooks,
 
 	if hooks.AfterEvaluateConditions != nil {
 		if err := hooks.AfterEvaluateConditions(ctx); err != nil {
-			return errors.Join(err)
+			return err
 		}
 	}
 
@@ -95,12 +95,11 @@ func ValidateMulti(ctx context.Context, targets []Target, hooks ProcessingHooks,
 
 	if hooks.AfterPrepareRules != nil {
 		if err := hooks.AfterPrepareRules(ctx); err != nil {
-			return errors.Join(err)
+			return err
 		}
 	}
 
-	// assign the length of the prepared rules to the slice
-	errs = make([]error, 0, rulesCounter)
+	// Prepare errors are preserved; validate errors are appended below
 
 	for i := range targets {
 		// Validate prepared rules
@@ -114,7 +113,7 @@ func ValidateMulti(ctx context.Context, targets []Target, hooks ProcessingHooks,
 
 	if hooks.AfterValidateRules != nil {
 		if err := hooks.AfterValidateRules(ctx); err != nil {
-			return errors.Join(err)
+			return err
 		}
 	}
 
@@ -130,12 +129,12 @@ func Validate(ctx context.Context, tree Evaluable, hooks ProcessingHooks, name s
 	// Prepare the conditions for evaluation
 	err := tree.PrepareConditions(ctx)
 	if err != nil {
-		return errors.Join(err)
+		return err
 	}
 
 	if hooks.AfterPrepareConditions != nil {
 		if err := hooks.AfterPrepareConditions(ctx); err != nil {
-			return errors.Join(err)
+			return err
 		}
 	}
 
@@ -144,7 +143,7 @@ func Validate(ctx context.Context, tree Evaluable, hooks ProcessingHooks, name s
 
 	if hooks.AfterEvaluateConditions != nil {
 		if err := hooks.AfterEvaluateConditions(ctx); err != nil {
-			return errors.Join(err)
+			return err
 		}
 	}
 
@@ -167,7 +166,7 @@ func Validate(ctx context.Context, tree Evaluable, hooks ProcessingHooks, name s
 
 	if hooks.AfterPrepareRules != nil {
 		if err := hooks.AfterPrepareRules(ctx); err != nil {
-			return errors.Join(err)
+			return err
 		}
 	}
 
@@ -181,7 +180,7 @@ func Validate(ctx context.Context, tree Evaluable, hooks ProcessingHooks, name s
 
 	if hooks.AfterValidateRules != nil {
 		if err := hooks.AfterValidateRules(ctx); err != nil {
-			return errors.Join(err)
+			return err
 		}
 	}
 

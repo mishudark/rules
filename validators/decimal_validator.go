@@ -10,7 +10,10 @@ import (
 // decimalValidator validates a decimal number string against max_digits and decimal_places.
 func decimalValidator(value string, maxDigits, decimalPlaces int) error {
 	if value == "" {
-		return fmt.Errorf("value cannot be empty")
+		return rules.Error{
+			Code: "DECIMAL_VALUE_CANNOT_BE_EMPTY",
+			Err:  "value cannot be empty",
+		}
 	}
 
 	parts := strings.Split(value, ".")
@@ -23,7 +26,10 @@ func decimalValidator(value string, maxDigits, decimalPlaces int) error {
 		integerPart = parts[0]
 		fractionalPart = parts[1]
 	} else {
-		return fmt.Errorf("invalid decimal format: too many periods")
+		return rules.Error{
+			Code: "INVALID_DECIMAL_FORMAT",
+			Err:  "invalid decimal format: too many periods",
+		}
 	}
 
 	if strings.HasPrefix(integerPart, "-") {
@@ -31,15 +37,24 @@ func decimalValidator(value string, maxDigits, decimalPlaces int) error {
 	}
 
 	if len(integerPart)+len(fractionalPart) > maxDigits {
-		return fmt.Errorf("the number of digits (%d) exceeds the allowed maximum of %d", len(integerPart)+len(fractionalPart), maxDigits)
+		return rules.Error{
+			Code: "DECIMAL_TOO_MANY_DIGITS",
+			Err:  fmt.Sprintf("the number of digits (%d) exceeds the allowed maximum of %d", len(integerPart)+len(fractionalPart), maxDigits),
+		}
 	}
 
 	if len(fractionalPart) > decimalPlaces {
-		return fmt.Errorf("the number of decimal places (%d) exceeds the allowed maximum of %d", len(fractionalPart), decimalPlaces)
+		return rules.Error{
+			Code: "DECIMAL_TOO_MANY_DECIMAL_PLACES",
+			Err:  fmt.Sprintf("the number of decimal places (%d) exceeds the allowed maximum of %d", len(fractionalPart), decimalPlaces),
+		}
 	}
 
 	if len(integerPart) > maxDigits-decimalPlaces {
-		return fmt.Errorf("the number of integer digits (%d) exceeds the allowed maximum of %d", len(integerPart), maxDigits-decimalPlaces)
+		return rules.Error{
+			Code: "DECIMAL_TOO_MANY_INTEGER_DIGITS",
+			Err:  fmt.Sprintf("the number of integer digits (%d) exceeds the allowed maximum of %d", len(integerPart), maxDigits-decimalPlaces),
+		}
 	}
 
 	return nil

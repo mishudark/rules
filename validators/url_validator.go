@@ -3,6 +3,7 @@ package validators
 import (
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/mishudark/rules"
@@ -12,24 +13,26 @@ import (
 // It can also check against a list of allowed schemes (e.g., "http", "https").
 func urlValidator(value string, schemes []string) error {
 	if value == "" {
-		return fmt.Errorf("URL cannot be empty")
+		return rules.Error{
+			Code: "URL_CANNOT_BE_EMPTY",
+			Err:  "url cannot be empty",
+		}
 	}
 
 	parsedURL, err := url.ParseRequestURI(value)
 	if err != nil {
-		return fmt.Errorf("invalid URL format: %w", err)
+		return rules.Error{
+			Code: "INVALID_URL_FORMAT",
+			Err:  fmt.Sprintf("invalid url format: %s", err.Error()),
+		}
 	}
 
-	if len(schemes) > 0 {
-		isSchemeAllowed := false
-		for _, scheme := range schemes {
-			if strings.EqualFold(parsedURL.Scheme, scheme) {
-				isSchemeAllowed = true
-				break
-			}
-		}
-		if !isSchemeAllowed {
-			return fmt.Errorf("URL scheme '%s' is not in the list of allowed schemes", parsedURL.Scheme)
+	if len(schemes) > 0 && !slices.ContainsFunc(schemes, func(s string) bool {
+		return strings.EqualFold(parsedURL.Scheme, s)
+	}) {
+		return rules.Error{
+			Code: "URL_SCHEME_NOT_ALLOWED",
+			Err:  fmt.Sprintf("url scheme '%s' is not in the list of allowed schemes", parsedURL.Scheme),
 		}
 	}
 

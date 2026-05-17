@@ -3,6 +3,7 @@ package validators
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/mishudark/rules"
@@ -12,17 +13,19 @@ import (
 func fileExtensionValidator(filename string, allowedExtensions []string) error {
 	ext := strings.ToLower(filepath.Ext(filename))
 	if len(ext) > 0 {
-		// Remove the leading dot.
 		ext = ext[1:]
 	}
 
-	for _, allowedExt := range allowedExtensions {
-		if strings.ToLower(allowedExt) == ext {
-			return nil
+	if ext == "" || !slices.ContainsFunc(allowedExtensions, func(e string) bool {
+		return strings.EqualFold(e, ext)
+	}) {
+		return rules.Error{
+			Code: "FILE_EXTENSION_NOT_ALLOWED",
+			Err:  fmt.Sprintf("file extension '%s' is not allowed. allowed extensions are: %v", ext, allowedExtensions),
 		}
 	}
 
-	return fmt.Errorf("file extension '%s' is not allowed. Allowed extensions are: %v", ext, allowedExtensions)
+	return nil
 }
 
 // FileExtensionValidator returns a new rule that validates if a filename has an allowed extension.

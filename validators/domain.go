@@ -17,23 +17,14 @@ const (
 )
 
 var (
-	// Regex for domains allowing Unicode characters (IDNA).
-	// More lenient: Checks general structure (non-empty labels separated by dots, ending in TLD).
-	// Doesn't strictly enforce hyphen rules or label length here; those are checked manually.
-	// Allows structure like: label.label.tld or label.tld
-	// Handles basic Punycode prefix xn-- in TLD. Case-insensitive (?i).
-	// Label part: `(?:[a-z\p{L}0-9](?:[a-z\p{L}0-9-]*[a-z\p{L}0-9])?)` - allows hyphens inside, starts/ends with alphanum/unicode letter
-	// TLD part: `(?:[a-z\p{L}-]{2,}|xn--[a-z0-9]{1,})` - Allows letters/hyphens (min 2) or punycode
-	// Combined: `^(label\.)+(tld)$` structure
-	idnaDomainRegex = regexp.MustCompile(`(?i)^(?:[a-z\p{L}0-9](?:[a-z\p{L}0-9-]*[a-z\p{L}0-9])?\.)+(?:[a-z\p{L}-]{2,}|xn--[a-z0-9]{1,})$`)
-
-	// Regex for ASCII-only domains. More lenient structure check.
-	// Label part: `(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)`
-	// TLD part: `[a-z]{2,}`
-	asciiDomainRegex = regexp.MustCompile(`(?i)^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$`)
-
 	// Regex to check if a string contains only ASCII characters.
 	asciiOnlyRegex = regexp.MustCompile(`^[\x00-\x7F]*$`)
+
+	// idnaDomainStructureRegex checks general domain structure for IDNA-enabled validation.
+	idnaDomainStructureRegex = regexp.MustCompile(`(?i)^(?:[a-z\p{L}0-9](?:[a-z\p{L}0-9-]{0,61}[a-z\p{L}0-9])?\.)+(?:[a-z\p{L}-]{2,}|xn--[a-z0-9]{1,59})$`)
+
+	// asciiDomainStructureRegex checks general domain structure for ASCII-only validation.
+	asciiDomainStructureRegex = regexp.MustCompile(`(?i)^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$`)
 )
 
 // ValidDomainNameAdvanced creates a validation Rule that checks if a given string
@@ -58,7 +49,7 @@ func ValidDomainNameAdvanced(fieldName string, domain string, acceptIdna bool) r
 		if len(trimmedDomain) > maxDomainLengthAdvanced {
 			return rules.Error{
 				Field: fieldName,
-				Err:   fmt.Sprintf("Domain name exceeds maximum length of %d bytes", maxDomainLengthAdvanced),
+				Err:   fmt.Sprintf("domain name exceeds maximum length of %d bytes", maxDomainLengthAdvanced),
 				Code:  "INVALID_DOMAIN_LENGTH",
 			}
 		}
@@ -68,7 +59,7 @@ func ValidDomainNameAdvanced(fieldName string, domain string, acceptIdna bool) r
 			if !asciiOnlyRegex.MatchString(trimmedDomain) {
 				return rules.Error{
 					Field: fieldName,
-					Err:   "Domain name contains non-ASCII characters, but IDNA is not accepted",
+					Err:   "domain name contains non-ascii characters, but idna is not accepted",
 					Code:  "NON_ASCII_DOMAIN_NOT_ALLOWED",
 				}
 			}
@@ -78,7 +69,7 @@ func ValidDomainNameAdvanced(fieldName string, domain string, acceptIdna bool) r
 		if strings.HasSuffix(trimmedDomain, ".") {
 			return rules.Error{
 				Field: fieldName,
-				Err:   "Domain name must not end with a dot",
+				Err:   "domain name must not end with a dot",
 				Code:  "INVALID_DOMAIN_TRAILING_DOT", // Specific code for this case
 			}
 		}
@@ -89,7 +80,7 @@ func ValidDomainNameAdvanced(fieldName string, domain string, acceptIdna bool) r
 			// This also catches cases like "com" or just "hostname"
 			return rules.Error{
 				Field: fieldName,
-				Err:   "Invalid domain name format (must contain at least one label and a TLD)",
+				Err:   "invalid domain name format (must contain at least one label and a tld)",
 				Code:  "INVALID_DOMAIN_STRUCTURE",
 			}
 		}
@@ -99,7 +90,7 @@ func ValidDomainNameAdvanced(fieldName string, domain string, acceptIdna bool) r
 				// Catch cases like "example..com"
 				return rules.Error{
 					Field: fieldName,
-					Err:   fmt.Sprintf("Invalid domain name format (empty label found before '%s')", strings.Join(labels[i+1:], ".")),
+					Err:   fmt.Sprintf("invalid domain name format (empty label found before '%s')", strings.Join(labels[i+1:], ".")),
 					Code:  "INVALID_DOMAIN_EMPTY_LABEL",
 				}
 			}
@@ -110,7 +101,7 @@ func ValidDomainNameAdvanced(fieldName string, domain string, acceptIdna bool) r
 			if utf8.RuneCountInString(label) > maxDomainLabelLength {
 				return rules.Error{
 					Field: fieldName,
-					Err:   fmt.Sprintf("Domain label '%s' exceeds maximum length of %d characters", label, maxDomainLabelLength),
+					Err:   fmt.Sprintf("domain label '%s' exceeds maximum length of %d characters", label, maxDomainLabelLength),
 					Code:  "INVALID_DOMAIN_LABEL_LENGTH",
 				}
 			}
@@ -119,7 +110,7 @@ func ValidDomainNameAdvanced(fieldName string, domain string, acceptIdna bool) r
 			if strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
 				return rules.Error{
 					Field: fieldName,
-					Err:   fmt.Sprintf("Domain label '%s' must not start or end with a hyphen", label),
+					Err:   fmt.Sprintf("domain label '%s' must not start or end with a hyphen", label),
 					Code:  "INVALID_DOMAIN_LABEL_HYPHEN",
 				}
 			}
@@ -130,7 +121,7 @@ func ValidDomainNameAdvanced(fieldName string, domain string, acceptIdna bool) r
 				if utf8.RuneCountInString(label) < 2 {
 					return rules.Error{
 						Field: fieldName,
-						Err:   fmt.Sprintf("Top-level domain '%s' must be at least 2 characters long", label),
+						Err:   fmt.Sprintf("top-level domain '%s' must be at least 2 characters long", label),
 						Code:  "INVALID_DOMAIN_TLD_LENGTH",
 					}
 				}
@@ -138,34 +129,26 @@ func ValidDomainNameAdvanced(fieldName string, domain string, acceptIdna bool) r
 				if !acceptIdna && strings.HasPrefix(label, "xn--") {
 					return rules.Error{
 						Field: fieldName,
-						Err:   fmt.Sprintf("Top-level domain '%s' uses Punycode, but IDNA is not accepted", label),
+						Err:   fmt.Sprintf("top-level domain '%s' uses punycode, but idna is not accepted", label),
 						Code:  "PUNYCODE_TLD_NOT_ALLOWED",
 					}
 				}
-			} else {
-				// Non-TLD label checks (if any differ from TLD checks)
-				// Ensure non-TLD labels don't look like Punycode TLDs if that's a requirement
-				// (Usually not needed, but possible)
 			}
 		}
 
 		// Now that specific errors are caught, use regex for general format validation.
 		var chosenRegex *regexp.Regexp
 		if acceptIdna {
-			// Use a regex that checks structure but is lenient on content details already checked manually
-			// This regex focuses on `label.label.tld` structure with allowed chars, minimum TLD length.
-			// It's simplified because manual checks handle hyphens, label length etc.
-			chosenRegex = regexp.MustCompile(`(?i)^(?:[a-z\p{L}0-9](?:[a-z\p{L}0-9-]{0,61}[a-z\p{L}0-9])?\.)+(?:[a-z\p{L}-]{2,}|xn--[a-z0-9]{1,59})$`)
+			chosenRegex = idnaDomainStructureRegex
 		} else {
-			// ASCII version - simplified structure check
-			chosenRegex = regexp.MustCompile(`(?i)^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$`)
+			chosenRegex = asciiDomainStructureRegex
 		}
 
 		if !chosenRegex.MatchString(trimmedDomain) {
 			// This should ideally catch fewer cases now, maybe complex structural issues missed by manual checks.
 			return rules.Error{
 				Field: fieldName,
-				Err:   "Invalid domain name format (failed final regex structure check)",
+				Err:   "invalid domain name format (failed final regex structure check)",
 				Code:  "INVALID_DOMAIN_FORMAT_REGEX",
 			}
 		}

@@ -328,6 +328,9 @@ func FieldEquals(name string, fieldName string, expected any) Condition {
 // TypedConditionWithPrepare is a condition that loads data during Prepare
 // and uses it during IsValid. This enables separating data loading from evaluation.
 // In is the input data type from the DataRegistry, T is the loaded data type.
+//
+// ⚠️ WARNING: This type stores mutable state (loadedData, hasData) set during Prepare() and read during IsValid().
+// It is NOT safe for concurrent use. See NewTypedConditionWithPrepare for details.
 type TypedConditionWithPrepare[In any, T any] struct {
 	name       string
 	prepare    func(ctx context.Context, input In) (T, error)

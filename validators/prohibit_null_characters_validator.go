@@ -1,16 +1,18 @@
 package validators
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/mishudark/rules"
 )
 
-// ProhibitNullCharactersValidator checks if a string contains null characters ('\x00').
+// prohibitNullCharactersValidator checks if a string contains null characters ('\x00').
 func prohibitNullCharactersValidator(value string) error {
 	if strings.Contains(value, "\x00") {
-		return fmt.Errorf("null characters are not allowed")
+		return rules.Error{
+			Code: "NULL_CHARACTERS_FOUND",
+			Err:  "null characters are not allowed",
+		}
 	}
 	return nil
 }

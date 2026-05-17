@@ -309,10 +309,16 @@ type NotCondition struct {
 }
 
 func (n *NotCondition) Name() string {
+	if n.condition == nil {
+		return "Not -> nil"
+	}
 	return fmt.Sprintf("Not -> %s", n.condition.Name())
 }
 
 func (n *NotCondition) Prepare(ctx context.Context) error {
+	if n.condition == nil {
+		return nil
+	}
 	return n.condition.Prepare(ctx)
 }
 
@@ -464,12 +470,20 @@ func (n *NopRule) Validate(ctx context.Context) error {
 
 var _ Rule = (*NopRule)(nil) // Ensure NopRule implements the Rule interface.
 
-// ChainRules  represents a Rule that encapsulates
+// ChainRules represents a Rule that encapsulates
 // a sequence of other Rules. When Prepare or Validate is called on ChainRules,
 // it executes the corresponding method on each child Rule in order, stopping
 // and returning the first encountered error. If all child rules succeed, it returns nil.
+//
+// Use ChainRules to create a sequential validation chain.
 type ChainRules struct {
+	RuleBase
 	Rules []Rule
+}
+
+// Name returns the rule name.
+func (c *ChainRules) Name() string {
+	return "chainRules"
 }
 
 // Prepare implements the Rule interface for ChainRules. It calls Prepare() on each
@@ -498,6 +512,12 @@ func (c *ChainRules) Validate(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// NewChainRules creates a sequential validation chain from the provided rules.
+// The rules are executed in order, stopping and returning the first error encountered.
+func NewChainRules(rules ...Rule) Rule {
+	return &ChainRules{Rules: rules}
 }
 
 // RuleBase provides a basic implementation of the Rule execution path.
@@ -541,9 +561,11 @@ func (r *RulePure) Name() string {
 // wrapped Rule function and returns its result (error or nil).
 func (r *RulePure) Validate(ctx context.Context) error {
 	if r.rule == nil {
-		// Avoid nil pointer dereference if Rule func wasn't provided.
-		// Consider returning an error here or handling it based on requirements.
-		return nil // Or return fmt.Errorf("RulePure's Rule function is nil")?
+		return Error{
+			Field: r.name,
+			Err:   "rule function is nil",
+			Code:  "RULE_FUNC_NIL",
+		}
 	}
 
 	return r.rule()
@@ -799,6 +821,9 @@ func NewTypedCondition[T any](name string, fn func(ctx context.Context, data T) 
 
 // TypedRuleDataFunc is a rule with Prepare support and type-safe data access.
 // This allows rules to have side effects (e.g., fetching data) before validation.
+//
+// ⚠️ WARNING: This type stores mutable state (loadedData, hasData) set during Prepare() and read during Validate().
+// It is NOT safe for concurrent use. See NewTypedRuleWithPrepare for details.
 type TypedRuleDataFunc[In any, T any] struct {
 	RuleBase
 	name       string
@@ -884,8 +909,22 @@ func (r *TypedRuleDataFunc[In, T]) Validate(ctx context.Context) error {
 // This is useful when you need to fetch additional data or perform side effects
 // before validation (e.g., checking a database, calling an API).
 //
-// ⚠️ IMPORTANT: This rule stores state (loadedData) and is NOT safe for concurrent
-// use. When validating multiple items concurrently, create one tree per target:
+// ⚠️ IMPORTANT: This rule stores mutable state (loadedData, hasData) and is NOT safe for
+// concurrent use. When validating multiple items concurrently, create one tree per target:
+//
+//	// ✅ Correct: One tree per target
+//	for _, user := range users {
+//	    tree := buildTree() // Create inside loop
+//	    err := rules.ValidateWithData(ctx, tree, hooks, "validate", user)
+//	}
+//
+//	// ❌ Wrong: Sharing tree across goroutines causes race conditions
+//	tree := buildTree()
+//	for _, user := range users {
+//	    go func(u User) {
+//	        err := rules.ValidateWithData(ctx, tree, hooks, "validate", u) // RACE!
+//	    }(user)
+//	}
 //
 // Example:
 //
