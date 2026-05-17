@@ -2,7 +2,6 @@ package rules
 
 import (
 	"context"
-	"fmt"
 	"reflect"
 )
 
@@ -30,16 +29,6 @@ func Get(ctx context.Context) (any, bool) {
 	return reg.data, true
 }
 
-// MustGet retrieves the data from context, panicking if not found.
-// Use this when data is guaranteed to exist in the context.
-func MustGet(ctx context.Context) any {
-	v, ok := Get(ctx)
-	if !ok {
-		panic("validation data not found in context")
-	}
-	return v
-}
-
 // GetAs retrieves typed data from context with runtime type assertion.
 // Returns the typed data and a boolean indicating if the type matches.
 //
@@ -57,16 +46,6 @@ func GetAs[T any](ctx context.Context) (T, bool) {
 	}
 	typed, ok := data.(T)
 	return typed, ok
-}
-
-// MustGetAs retrieves typed data from context, panicking if not found or type mismatch.
-func MustGetAs[T any](ctx context.Context) T {
-	v, ok := GetAs[T](ctx)
-	if !ok {
-		var zero T
-		panic(fmt.Sprintf("validation data not found or not of type %T", zero))
-	}
-	return v
 }
 
 // WithRegistry returns a new context with the provided registry.

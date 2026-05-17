@@ -730,7 +730,7 @@ func HandleRequest(w http.ResponseWriter, r *http.Request) {
     err := rules.ValidateWithData(...)
 }
 
-// GOOD - cache tree globally
+// GOOD - cache tree globally (see ⚠️ below)
 var cachedTree rules.Evaluable
 
 func init() {
@@ -741,6 +741,12 @@ func HandleRequest(w http.ResponseWriter, r *http.Request) {
     err := rules.ValidateWithData(ctx, cachedTree, hooks, "validate", data)
 }
 ```
+
+> ⚠️ **IMPORTANT**: Global tree caching is only safe for trees containing **pure** rules/conditions
+> (`RuleDataFunc`, `ConditionFunc`, `ConditionPure`, `RulePure`). If your tree uses
+> `TypedRuleDataFunc` or `TypedConditionWithPrepare` (which store mutable state), you must
+> create one tree per target to avoid data races. See `NewTypedRuleWithPrepare` and
+> `NewTypedConditionWithPrepare` for details.
 
 ## Performance Checklist
 

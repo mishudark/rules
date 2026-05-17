@@ -41,7 +41,7 @@ func MaxLengthString(fieldName, value string, max int) rules.Rule {
 }
 
 // MinLengthSlice checks if the slice value has a minimum length
-func MinLengthSlice(fieldName string, value []any, min int) rules.Rule {
+func MinLengthSlice[T any](fieldName string, value []T, min int) rules.Rule {
 	return rules.NewRulePure("minLengthSlice",
 		func() error {
 			if len(value) >= min {
@@ -58,7 +58,7 @@ func MinLengthSlice(fieldName string, value []any, min int) rules.Rule {
 }
 
 // MaxLengthSlice checks if the slice value has a maximum length
-func MaxLengthSlice(fieldName string, value []any, max int) rules.Rule {
+func MaxLengthSlice[T any](fieldName string, value []T, max int) rules.Rule {
 	return rules.NewRulePure("maxLengthSlice",
 		func() error {
 			if len(value) <= max {

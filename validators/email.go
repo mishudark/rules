@@ -2,7 +2,8 @@ package validators
 
 import (
 	"fmt"
-	"net/mail" // Standard library package for email address parsing (RFC 5322)
+	"net/mail"
+	"slices"
 	"strings"
 
 	"github.com/mishudark/rules"
@@ -31,7 +32,7 @@ func Email(fieldName string, email string, allowlist []string) rules.Rule {
 			// Parsing failed, so the format is invalid.
 			return rules.Error{
 				Field: fieldName,
-				Err:   fmt.Sprintf("Invalid email address format: %v", err), // Include the parser's error for detail
+				Err:   fmt.Sprintf("invalid email address format: %v", err), // Include the parser's error for detail
 				Code:  "INVALID_EMAIL_FORMAT",
 			}
 		}
@@ -43,18 +44,12 @@ func Email(fieldName string, email string, allowlist []string) rules.Rule {
 				domain = parts[1]
 			}
 
-			isAllowed := false
-			for _, allowedDomain := range allowlist {
-				if strings.EqualFold(domain, allowedDomain) {
-					isAllowed = true
-					break
-				}
-			}
-
-			if !isAllowed {
+			if !slices.ContainsFunc(allowlist, func(allowed string) bool {
+				return strings.EqualFold(domain, allowed)
+			}) {
 				return rules.Error{
 					Field: fieldName,
-					Err:   fmt.Sprintf("The domain '%s' is not in the list of allowed domains", domain),
+					Err:   fmt.Sprintf("the domain '%s' is not in the list of allowed domains", domain),
 					Code:  "DOMAIN_NOT_ALLOWED",
 				}
 			}

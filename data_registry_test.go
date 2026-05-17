@@ -368,11 +368,6 @@ func TestValidateMultiWithData(t *testing.T) {
 func TestIsAssignableTo(t *testing.T) {
 	t.Parallel()
 
-	// Create an interface
-	type Named interface {
-		GetName() string
-	}
-
 	type hasName struct {
 		Name string
 	}
@@ -543,4 +538,41 @@ func TestNewTypedRuleWithPrepare_NoData(t *testing.T) {
 	if err == nil {
 		t.Error("expected error when no data in context for validate")
 	}
+}
+
+func TestTypeOf(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns type of data", func(t *testing.T) {
+		ctx := WithRegistry(context.Background(), NewDataRegistry(testUser{Name: "Alice"}))
+		typ := TypeOf(ctx)
+		if typ == nil {
+			t.Fatal("expected non-nil type")
+		}
+	})
+
+	t.Run("returns nil when no data", func(t *testing.T) {
+		ctx := context.Background()
+		if typ := TypeOf(ctx); typ != nil {
+			t.Errorf("expected nil, got %v", typ)
+		}
+	})
+}
+
+func TestIsType(t *testing.T) {
+	t.Parallel()
+
+	t.Run("exact type match", func(t *testing.T) {
+		ctx := WithRegistry(context.Background(), NewDataRegistry(testUser{Name: "Alice"}))
+		if !IsType(ctx, TypeOf(ctx)) {
+			t.Error("expected IsType to return true for matching type")
+		}
+	})
+
+	t.Run("no data returns false", func(t *testing.T) {
+		ctx := context.Background()
+		if IsType(ctx, nil) {
+			t.Error("expected IsType to return false when no data")
+		}
+	})
 }
