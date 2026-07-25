@@ -379,7 +379,23 @@ if !n.Condition.IsValid(ctx) {       // don't short-circuit impure!
 
 **Consequence for `ConditionEither.PrepareConditions`:**
 For **pure** conditions, only the matching branch (`Left` or `Right`) is
-prepared. For **impure** conditions, **both** branches are prepared.
+prepared. For **impure** conditions, **both** branches are prepared. A
+**nil** condition prepares only the `Right` branch, because `Evaluate`
+treats nil as false and selects it.
+
+**Consequence for composite rules:** `Or` and `ChainRules` short-circuit
+only in `Validate`. Their `Prepare` must run on **all** children:
+preparation is setup work, not evaluation.
+
+**Phase separation is total:** every condition `Prepare` happens before
+any rule `Prepare`, and every rule `Prepare` before any `Validate`.
+`ValidateMulti` extends this across targets (all targets' conditions
+before any evaluation, all rules before any validation), which is what
+lets a dataloader coalesce fetches for an entire batch.
+
+**Enforcement:** These invariants are tested in `architecture_test.go`
+with an ordered event log. Run it after any change to the engine's
+traversal logic.
 
 **Consequence for refactors:** Any change that gates `Prepare()` on an
 `IsValid` check (for an impure condition) is almost certainly wrong and

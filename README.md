@@ -110,7 +110,7 @@ tree := rules.Rules(
 
 ## How Validation Works
 
-Validation executes in **4 phases**:
+Validation executes in **4 strictly separated phases**:
 
 ```
 PrepareConditions → Evaluate → Prepare → Validate
@@ -123,16 +123,42 @@ PrepareConditions → Evaluate → Prepare → Validate
 | **Prepare** | Each candidate rule can fetch data it needs |
 | **Validate** | Run each rule's validation logic, collect errors |
 
-Hooks can be injected at each phase via `ProcessingHooks`:
+The phases never interleave: **every** condition is prepared before any rule is prepared, and **every** rule is prepared before any validation runs. `ValidateMulti` extends this across targets — all targets' conditions are prepared before any evaluation, and all targets' rules before any validation.
+
+### Dataloader-friendly by design
+
+This ordering exists so `Prepare` implementations can fan out fetches through a [dataloader](https://github.com/graph-gophers/dataloader)-style batcher and pay a single round-trip per phase instead of one per node:
+
+- **Impure `Node` conditions**: children are prepared even when the condition turns out false — short-circuiting would serialize fetches across branches (N+1).
+- **Impure `Either` conditions**: **both** branches are prepared, for the same reason.
+- **Pure conditions**: evaluated immediately during `PrepareConditions`; a pure-false condition prunes its whole subtree (safe, because pure means no fetches to lose).
+- **Composite rules** (`Or`, `ChainRules`): `Prepare` runs on **all** children regardless of their short-circuit `Validate` semantics — preparation is setup work.
+
+```go
+rule := rules.NewTypedRuleWithPrepare(
+    "checkEmailUnique",
+    func(ctx context.Context, u User) (EmailData, error) {
+        return loader.Load(ctx, u.Email) // batched with all other Prepare fetches
+    },
+    func(ctx context.Context, u User, data EmailData) error {
+        if data.Exists { return fmt.Errorf("email already in use") }
+        return nil
+    },
+)
+```
+
+Hooks can be injected at each phase boundary via `ProcessingHooks` — a natural place to flush a dataloader:
 
 ```go
 hooks := rules.ProcessingHooks{
-    AfterPrepareConditions:  func(ctx context.Context) error { log.Println("conditions prepared"); return nil },
+    AfterPrepareConditions:  func(ctx context.Context) error { loader.Flush(); return nil },
     AfterEvaluateConditions: func(ctx context.Context) error { log.Println("evaluated"); return nil },
-    AfterPrepareRules:       func(ctx context.Context) error { log.Println("rules prepared"); return nil },
+    AfterPrepareRules:       func(ctx context.Context) error { loader.Flush(); return nil },
     AfterValidateRules:      func(ctx context.Context) error { log.Println("validated"); return nil },
 }
 ```
+
+Hook error semantics: errors from the first three hooks halt validation immediately; an `AfterValidateRules` error is joined with the collected validation errors via `errors.Join` and returned together.
 
 ---
 
@@ -351,6 +377,8 @@ condition := rules.NewCondition("isAdult", func(ctx context.Context) bool {
 
 > 💡 Validators without a `name` parameter return errors with an empty `Field`. Validators with `name` fill the `Field` field in `rules.Error` for structured error reporting.
 
+> 💡 **Empty values are valid by convention.** All validators (e.g. `Email`, `URL`) treat an empty string as valid — they check *format*, not *presence*. If a field is required, add a separate presence check.
+
 ---
 
 ## Full Example: User Registration
@@ -535,7 +563,7 @@ myRule := rules.NewTypedRuleWithPrepare(
 )
 ```
 
-⚠️ **Concurrency:** `NewTypedRuleWithPrepare` stores mutable state. Create one tree per validation target:
+⚠️ **Concurrency:** `NewTypedRuleWithPrepare` stores mutable state and is not safe for concurrent use. Trees built only from pure rules/conditions (`NewRule`, `NewTypedRule`, `NewRulePure`, `NewCondition`, `FastIsA`, ...) **are safe to share across goroutines**. For stateful rules, create one tree per validation target:
 
 ```go
 // ✅ Correct: One tree per validation
@@ -680,7 +708,7 @@ if err != nil {
 | `MIN_LENGTH_STRING`, `MAX_LENGTH_STRING` | `MinLengthString`, `MaxLengthString` |
 | `MIN_LENGTH_SLICE`, `MAX_LENGTH_SLICE` | `MinLengthSlice`, `MaxLengthSlice` |
 | `INVALID_SLUG`, `INVALID_UNICODE_SLUG` | `Slug`, `UnicodeSlug` |
-| `URL_CANNOT_BE_EMPTY`, `INVALID_URL_FORMAT`, `URL_SCHEME_NOT_ALLOWED` | `URL` |
+| `INVALID_URL_FORMAT`, `URL_SCHEME_NOT_ALLOWED` | `URL` |
 | `INVALID_IPV4_ADDRESS`, `INVALID_IPV6_ADDRESS`, `INVALID_IP_ADDRESS` | `IPv4Address`, `IPv6Address`, `IPv46Address` |
 | `FILE_EXTENSION_NOT_ALLOWED` | `FileExtensionValidator` |
 | `CONTENT_TYPE_EMPTY_FILE`, `CONTENT_TYPE_MISMATCH` | `NewRuleContentType` |
@@ -699,6 +727,24 @@ for i, item := range items {
 }
 err := rules.ValidateMultiWithData(ctx, targets, hooks, "batch")
 ```
+
+Across the batch, all targets' conditions are prepared before any rule preparation, so dataloader fetches for the entire batch can be coalesced.
+
+---
+
+## Execution Path Tracing
+
+For debugging and logging, you can record the path each rule took through the tree. Tracing is opt-in and race-free — rules are never mutated during evaluation:
+
+```go
+ctx, trace := rules.WithExecutionTrace(ctx)
+err := rules.ValidateWithData(ctx, tree, hooks, "validate", user)
+
+fmt.Println(trace.Path(rule))
+// "validate -> root -> isPremium -> leafNode -> checkAge"
+```
+
+The legacy `SetExecutionPath`/`GetExecutionPath` methods are deprecated; use `ExecutionTrace` instead.
 
 ---
 
@@ -758,9 +804,9 @@ Requires Go **1.26+**.
 
 6. **Know the difference: `Or` vs `AnyOf`** — `Or(rule, ...)` creates a `Rule` (use inside `Rules()`), while `AnyOf(children...)` creates an `Evaluable` (use as a tree node).
 
-7. **Only cache pure trees globally** — Trees with `TypedRuleDataFunc` or `TypedConditionWithPrepare` store mutable state. Cache only trees with pure rules (`RuleDataFunc`, `ConditionFunc`, `RulePure`).
+7. **Share pure trees freely, even across goroutines** — Trees built from pure rules/conditions (`RuleDataFunc`, `ConditionFunc`, `RulePure`, type checkers) hold no mutable state and are safe for concurrent validation. Cache them globally.
 
-8. **Don't share stateful trees across goroutines** — `NewTypedRuleWithPrepare` and `NewTypedConditionWithPrepare` are **not safe for concurrent use**. Create one tree per goroutine:
+8. **Don't share stateful trees across goroutines** — `NewTypedRuleWithPrepare` and `NewTypedConditionWithPrepare` store mutable state and are **not safe for concurrent use**. Create one tree per goroutine:
 
     ```go
     // ✅ Safe: tree created per loop iteration
