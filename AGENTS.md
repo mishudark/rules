@@ -16,6 +16,73 @@ This repository implements a flexible **rule engine** in Go for creating and eva
 **Go Version**: 1.26  
 **Dependency**: `golang.org/x/exp`
 
+## 1.5 Architecture at a Glance
+
+The engine is a **two-phase rule selector**, not a single-pass validator.
+Read this before touching anything in `rules.go`, `conditions.go`,
+`validation.go`, or `data_registry.go`.
+
+```
+            ┌─────────────────────────────────────────────┐
+            │  Evaluable tree (built once, reused)         │
+            │  Root -> Node -> Rules                      │
+            │              -> AllOf / AnyOf / Either       │
+            └─────────────────────────────────────────────┘
+                            │
+        ┌───────────────────┴───────────────────┐
+        ▼                                       ▼
+ PHASE A: Prepare                          PHASE B: Evaluate
+ (fan-out / batch)                         (gate / select / run)
+ ───────────────────                       ──────────────────────────
+ PrepareConditions(ctx)  top-down    →   Evaluate(ctx, path) top-down
+ • Condition.Prepare (fetches)              • Condition.IsValid (decide)
+ • recurse ALL children                     • recurse only matching
+                                              children (collect []Rule)
+                                            →   Rule.Prepare
+                                            →   Rule.Validate  (the check)
+```
+
+**Three load-bearing concepts:**
+
+1. **Conditions gate; Rules check.** `Condition` produces a `bool` for
+   branch selection. `Rule` produces an `error` for validation. Don't
+   conflate them. A `ConditionNode` *flopped to false during Evaluate*
+   contributes zero rules — it is not itself a validation failure.
+
+2. **Pure vs Impure conditions.** `Condition.IsPure()` signals whether
+   `Prepare()` has side effects. This bit is *load-bearing* for the engine,
+   not a hint:
+   - **Pure** → `Prepare` is a no-op, so `IsValid` can be evaluated
+     eagerly during `PrepareConditions` to prune a dead subtree.
+   - **Impure** → `Prepare` does I/O (DB/API/dataloader). The engine
+     **must** still walk the subtree and call `Prepare` on every impure
+     child, even when this condition will later return false. See §6.8.
+
+3. **Two-phase = dataloader-friendly.** Phase A is "issue all the
+   fetches", Phase B is "consume the results". The whole point of the
+   split is to let callers wire a dataloader into `Prepare` so every
+   fetch across the tree batches into one round-trip. Phase A must not
+   filter based on Phase-B outcomes.
+
+**Files map directly to those concepts:**
+
+| File | Owns |
+|------|------|
+| `rules.go` | Tree node types, `Rule` implementations, `RuleBase` |
+| `conditions.go` | `Condition` implementations (pure, impure, typed, type-checks) |
+| `validation.go` | The 4-step driver (`Validate`, `ValidateMulti`, hooks) |
+| `data_registry.go` | Context-bound data access (`Get`, `GetAs`, `WithRegistry`) |
+| `validators/` | Stateless `Rule` constructors (email, length, url, …) |
+
+**Build vs Evaluate lifetime:**
+- Tree construction is allowed to allocate per-call closures (`NewRulePure`,
+  `NewConditionPure`) for one-shot use.
+- For reusable trees, use the data-registry pattern (`NewRule`,
+  `NewTypedRule`, `ValidateWithData`) — data is bound via context at
+  validation time, not closure capture.
+- `*WithTypePrepare` types store state (`loadedData`) set during Phase A
+  and read during Phase B → **never share them across goroutines**. See §6.3.
+
 ## 2. Essential Commands
 
 ```bash
@@ -197,7 +264,7 @@ The `IsPure()` method is critical:
 Use `NewCondition()` for pure conditions, `NewConditionSideEffect()` or `NewTypedConditionWithPrepare()` for impure ones.
 
 ### 6.3 State Storage and Concurrency ⚠️
-Rules/conditions with `Prepare()` may store state (e.g., `TypedRuleDataFunc`, `TypedConditionWithPrepare`). These are **NOT safe for concurrent use**:
+Trees made only of pure rules/conditions are safe to share across goroutines. However, rules/conditions with `Prepare()` may store state (e.g., `TypedRuleDataFunc`, `TypedConditionWithPrepare`). These are **NOT safe for concurrent use**:
 
 ```go
 // ✅ CORRECT: Create tree per validation
@@ -216,12 +283,13 @@ for _, user := range users {
 ```
 
 ### 6.4 Execution Path Tracing
-Rules track their execution path through the tree:
+Execution paths are recorded in an opt-in, race-free `ExecutionTrace` carried by context (rules are never mutated during evaluation):
 ```go
-rule.SetExecutionPath(path)  // Set during evaluation
-rule.GetExecutionPath()      // Get for debugging/logging
+ctx, trace := rules.WithExecutionTrace(ctx)
+err := rules.Validate(ctx, tree, hooks, "name")
+path := trace.Path(rule)  // e.g. "name -> root -> cond -> leafNode -> rule1"
 ```
-Tests verify this path to ensure correct tree traversal.
+Tests verify this path to ensure correct tree traversal. The legacy `SetExecutionPath`/`GetExecutionPath` methods are deprecated.
 
 ### 6.5 Type Checking Options
 Multiple ways to check types, with different performance characteristics:
@@ -243,14 +311,81 @@ validators.Email("email", "", nil)  // passes
 ```
 
 ### 6.7 Validation Flow (4 Steps)
-1. `PrepareConditions()` - Prepare conditions (fetch data, etc.)
-2. `Evaluate()` - Check conditions, collect candidate rules
-3. `Prepare()` - Prepare each rule
-4. `Validate()` - Run validation on prepared rules
 
-Hooks can be injected at each phase via `ProcessingHooks`.
+The engine runs in **two distinct phases**, not one. Understanding this split
+is essential — many "obvious" optimizations actually break the design.
 
-### 6.8 Error Type
+**Phase A — Prepare (fan out, batch fetches):**
+1. `Evaluable.PrepareConditions(ctx)` — walks the whole tree top-down,
+   calling `Condition.Prepare(ctx)` on each condition. For impure
+   conditions, `Prepare()` is where data loading happens (DB, API,
+   dataloader calls). For pure conditions it is a no-op.
+
+**Phase B — Evaluate (select + run rules):**
+2. `Evaluable.Evaluate(ctx, path)` — re-walks the tree, calling
+   `Condition.IsValid(ctx)` on each condition to decide which branch(es)
+   contribute rules; returns the candidate `[]Rule` slice.
+3. `Rule.Prepare(ctx)` — per-rule side-effect prep (e.g. additional
+   fetches for that specific rule).
+4. `Rule.Validate(ctx)` — runs the actual check on prepared rules.
+
+Hooks can be injected at each step via `ProcessingHooks`:
+
+```go
+type ProcessingHooks struct {
+    AfterPrepareConditions  Hook  // after Phase A
+    AfterEvaluateConditions Hook  // after step 2
+    AfterPrepareRules       Hook  // after step 3
+    AfterValidateRules      Hook  // after step 4
+}
+```
+
+### 6.8 The Dataloader Batching Invariant ⚠️
+
+This is the single most important architectural constraint in the engine.
+Violating it silently converts an O(1) round-trip into O(N) N+1 queries.
+
+**Rule:** The `Prepare` phase must fan out across **every** impure
+condition / rule in the tree, regardless of whether the parent condition
+will turn out to hold. `IsValid` is deferred to the `Evaluate` phase.
+
+**Why:** Impure `Prepare()` calls are expected to delegate to a dataloader
+(e.g. `graph-gophers/dataloader`, `victoriametrics/dataloader`). A
+dataloader batches all concurrent calls with the same key into one batch
+request and dedupes the results. This is only possible if **all** the
+fetches for the whole tree are issued during a single `Prepare` sweep.
+If you short-circuit a subtree's `Prepare` because "the parent condition
+is false anyway", you serialize fetches down only the surviving
+branches — recreating the N+1 problem the dataloader pattern exists to
+solve.
+
+**Consequence for `ConditionNode.PrepareConditions`:**
+```go
+// ✅ Correct
+if n.Condition.IsPure() && !n.Condition.IsValid(ctx) {
+    return nil          // pure: no-op Prepare, safe to prune
+}
+n.Condition.Prepare(ctx)            // impure: issue fetches
+for _, e := range n.Evaluables {     // ALWAYS prepare all children
+    e.PrepareConditions(ctx)
+}
+
+// ❌ WRONG — breaks batching
+n.Condition.Prepare(ctx)
+if !n.Condition.IsValid(ctx) {       // don't short-circuit impure!
+    return nil
+}
+```
+
+**Consequence for `ConditionEither.PrepareConditions`:**
+For **pure** conditions, only the matching branch (`Left` or `Right`) is
+prepared. For **impure** conditions, **both** branches are prepared.
+
+**Consequence for refactors:** Any change that gates `Prepare()` on an
+`IsValid` check (for an impure condition) is almost certainly wrong and
+needs explicit justification.
+
+### 6.9 Error Type
 The package defines a structured error type:
 ```go
 type Error struct {
@@ -259,6 +394,12 @@ type Error struct {
     Code  string  // Error code for i18n
 }
 ```
+
+⚠️ **Return `rules.Error` by value, not by pointer.** `Error()` is on the
+value receiver, so both compile — but callers and tests assert
+`err.(rules.Error)` (see §5), and a `*rules.Error` return silently fails
+that type assertion, masking test failures. Use `return rules.Error{...}`,
+never `return &rules.Error{...}`.
 
 ## 7. Adding New Validators
 

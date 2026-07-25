@@ -96,9 +96,15 @@ var _ Condition = (*typeChecker)(nil)
 //	)
 func IsA[T any](name string) Condition {
 	var zero T
+	targetType := reflect.TypeOf(zero)
+	if targetType == nil {
+		// T is an interface type: fall back to a type assertion, which
+		// matches any value implementing T.
+		return &genericChecker[T]{name: name}
+	}
 	return &typeChecker{
 		name:       name,
-		targetType: reflect.TypeOf(zero),
+		targetType: targetType,
 	}
 }
 
@@ -141,10 +147,11 @@ var _ Condition = (*assignableChecker)(nil)
 //	    })),
 //	)
 func IsAssignableTo[T any](name string) Condition {
-	var zero T
+	// reflect.TypeFor works for both concrete and interface types, unlike
+	// reflect.TypeOf on a zero value, which is nil for interfaces.
 	return &assignableChecker{
 		name:       name,
-		targetType: reflect.TypeOf(zero),
+		targetType: reflect.TypeFor[T](),
 	}
 }
 
@@ -217,9 +224,9 @@ func IsNil(name string) Condition {
 			if data == nil {
 				return true
 			}
-			// Check if it's a nil interface with underlying nil value
-			v := reflect.ValueOf(data)
-			return v.Kind() == reflect.Pointer && v.IsNil()
+			// Check if it's a nil interface with an underlying nil value
+			// (nil pointer, map, slice, channel, function, or interface).
+			return isNilValue(reflect.ValueOf(data))
 		},
 		pure: true,
 	}
@@ -237,14 +244,31 @@ func IsNotNil(name string) Condition {
 			if data == nil {
 				return false
 			}
-			v := reflect.ValueOf(data)
-			if v.Kind() == reflect.Pointer && v.IsNil() {
-				return false
-			}
-			return true
+			return !isNilValue(reflect.ValueOf(data))
 		},
 		pure: true,
 	}
+}
+
+// isNilValue reports whether v is a nil pointer, map, slice, channel,
+// function, or interface.
+func isNilValue(v reflect.Value) bool {
+	switch v.Kind() {
+	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func, reflect.Interface:
+		return v.IsNil()
+	default:
+		return false
+	}
+}
+
+// mapHasKey reports whether the map v contains the given string key without
+// panicking when the map's key type is not string.
+func mapHasKey(v reflect.Value, key string) bool {
+	keyType := v.Type().Key()
+	if keyType.Kind() != reflect.String {
+		return false
+	}
+	return v.MapIndex(reflect.ValueOf(key).Convert(keyType)).IsValid()
 }
 
 // HasField creates a condition that checks if the data has a specific field (for structs) or key (for maps).
@@ -273,8 +297,7 @@ func HasField(name string, fieldName string) Condition {
 				field := v.FieldByName(fieldName)
 				return field.IsValid()
 			case reflect.Map:
-				key := reflect.ValueOf(fieldName)
-				return v.MapIndex(key).IsValid()
+				return mapHasKey(v, fieldName)
 			default:
 				return false
 			}
@@ -309,8 +332,11 @@ func FieldEquals(name string, fieldName string, expected any) Condition {
 			case reflect.Struct:
 				fieldValue = v.FieldByName(fieldName)
 			case reflect.Map:
-				key := reflect.ValueOf(fieldName)
-				fieldValue = v.MapIndex(key)
+				keyType := v.Type().Key()
+				if keyType.Kind() != reflect.String {
+					return false
+				}
+				fieldValue = v.MapIndex(reflect.ValueOf(fieldName).Convert(keyType))
 			default:
 				return false
 			}

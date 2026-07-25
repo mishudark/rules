@@ -49,8 +49,14 @@ type Rule interface {
 	// Returns an error if validation fails, otherwise nil.
 	Validate(ctx context.Context) error
 	// SetExecutionPath allows setting a path for execution context.
+	//
+	// Deprecated: mutating rules during evaluation makes shared trees unsafe
+	// for concurrent use. Use WithExecutionTrace instead. The engine no
+	// longer calls this method.
 	SetExecutionPath(path string)
 	// GetExecutionPath retrieves the execution path for the rule.
+	//
+	// Deprecated: use ExecutionTrace.Path instead.
 	GetExecutionPath() string
 }
 
@@ -84,10 +90,15 @@ func (r *LeafNode) PrepareConditions(ctx context.Context) error {
 // Evaluate implements the Evaluable interface for LeafNode. It always
 // returns true, indicating success, along with the slice of Rules contained
 // within the node.
+//
+// If the context carries an ExecutionTrace (see WithExecutionTrace), the
+// path of each rule is recorded in the trace. Rules are never mutated, so a
+// LeafNode is safe for concurrent evaluation.
 func (n *LeafNode) Evaluate(ctx context.Context, executionPath string) (bool, []Rule) {
-	for _, rule := range n.Rules {
-		// Set the execution path for each rule.
-		rule.SetExecutionPath(fmt.Sprintf("%s -> %s -> %s", executionPath, "leafNode", rule.Name()))
+	if trace := traceFromContext(ctx); trace != nil {
+		for _, rule := range n.Rules {
+			trace.record(rule, fmt.Sprintf("%s -> %s -> %s", executionPath, "leafNode", rule.Name()))
+		}
 	}
 
 	return true, n.Rules
@@ -104,30 +115,36 @@ type ConditionNode struct {
 	Evaluables []Evaluable // The child nodes or rule sets to evaluate if Condition is true.
 }
 
-// PrepareConditions prepares the ConditionNode by preparing its Condition.
-// PrepareConditions prepares the ConditionNode by preparing its Condition.
+// PrepareConditions prepares the ConditionNode's condition and recursively
+// prepares its children.
+//
+// Optimization: when the condition is pure (no side effects), it can be
+// evaluated immediately, and if it is false the children are skipped —
+// nothing down this branch will run.
+//
+// For impure conditions, the children are ALWAYS prepared, even when the
+// condition will turn out to be false. This is intentional: impure
+// Prepare() calls are expected to fan out data fetches that a dataloader
+// will batch and deduplicate (single round-trip for the whole tree).
+// Short-circuiting here would serialize those fetches across branches,
+// producing N+1 round-trips. The IsValid check is deferred to Evaluate.
 func (n *ConditionNode) PrepareConditions(ctx context.Context) error {
 	if n.Condition == nil {
-		// Avoid nil pointer dereference if Condition func wasn't provided.
 		return nil
 	}
 
-	// If the condition is pure, we can evaluate it immediately.
-	if n.Condition.IsPure() {
-		// If the condition is not valid, we can stop traversing this branch.
-		if !n.Condition.IsValid(ctx) {
-			return nil
-		}
+	// If the condition is pure, evaluate it immediately and short-circuit
+	// the subtree when it cannot pass.
+	if n.Condition.IsPure() && !n.Condition.IsValid(ctx) {
+		return nil
 	}
 
-	err := n.Condition.Prepare(ctx)
-	if err != nil {
+	if err := n.Condition.Prepare(ctx); err != nil {
 		return err
 	}
 
 	for _, evaluable := range n.Evaluables {
-		err := evaluable.PrepareConditions(ctx)
-		if err != nil {
+		if err := evaluable.PrepareConditions(ctx); err != nil {
 			return err
 		}
 	}
@@ -290,18 +307,18 @@ func Node(condition Condition, children ...Evaluable) Evaluable {
 	}
 }
 
-// Or is a constructor function that creates and returns a new AnyOfNode
+// AnyOf is a constructor function that creates and returns a new AnyOfNode
 // containing the provided child Evaluables.
-func AnyOf(Children ...Evaluable) Evaluable {
-	return &AnyOfNode{Children: Children}
+func AnyOf(children ...Evaluable) Evaluable {
+	return &AnyOfNode{Children: children}
 }
 
 // Root is a constructor function often used to define the top-level node of
 // the validation evaluation tree. Currently, it creates an AnyOfNode, implying the
 // root requires at least one of its top-level children to evaluate successfully.
-func Root(Children ...Evaluable) Evaluable {
+func Root(children ...Evaluable) Evaluable {
 	// Note: Currently identical to AnyOf().
-	return &AnyOfNode{Children: Children, name: "root"}
+	return &AnyOfNode{Children: children, name: "root"}
 }
 
 type NotCondition struct {
@@ -350,46 +367,61 @@ type ConditionEither struct {
 	Right     []Evaluable // The evaluables to use if condition is false.
 }
 
-// PrepareConditions prepares the ConditionEither by preparing its Condition.
+// PrepareConditions prepares the ConditionEither's condition and the
+// appropriate branch's children.
+//
+// Optimization: when the condition is pure (no side effects), it can be
+// evaluated immediately and only the matching branch is prepared.
+//
+// For impure conditions, BOTH branches are always prepared. This is
+// intentional: impure Prepare() calls are expected to fan out data fetches
+// that a dataloader will batch and deduplicate (single round-trip for the
+// whole tree). Skipping the non-matching branch's children would serialize
+// fetches across branches, producing N+1 round-trips. The IsValid check
+// is deferred to Evaluate.
 func (n *ConditionEither) PrepareConditions(ctx context.Context) error {
 	if n.Condition == nil {
-		return nil
-	}
-
-	// Determine which branch to prepare based on condition purity
-	if n.Condition.IsPure() {
-		var sideToValidate []Evaluable
-		if n.Condition.IsValid(ctx) {
-			sideToValidate = n.Left
-		} else {
-			sideToValidate = n.Right
-		}
-
-		for _, evaluable := range sideToValidate {
-			err := evaluable.PrepareConditions(ctx)
-			if err != nil {
+		// Evaluate treats a nil condition as false and selects the right
+		// branch, so prepare that branch here to keep the
+		// prepare-all-conditions-first invariant.
+		for _, evaluable := range n.Right {
+			if err := evaluable.PrepareConditions(ctx); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
 
-	// Prepare the condition
-	err := n.Condition.Prepare(ctx)
-	if err != nil {
+	// Pure: evaluate immediately and prepare only the matching branch.
+	if n.Condition.IsPure() {
+		var sideToPrepare []Evaluable
+		if n.Condition.IsValid(ctx) {
+			sideToPrepare = n.Left
+		} else {
+			sideToPrepare = n.Right
+		}
+
+		for _, evaluable := range sideToPrepare {
+			if err := evaluable.PrepareConditions(ctx); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	// Impure: prepare the condition, then fan out Prepare across BOTH
+	// branches so the dataloader can batch all fetches together.
+	if err := n.Condition.Prepare(ctx); err != nil {
 		return err
 	}
 
-	// Non-pure condition: prepare both branches
 	for _, evaluable := range n.Left {
-		err := evaluable.PrepareConditions(ctx)
-		if err != nil {
+		if err := evaluable.PrepareConditions(ctx); err != nil {
 			return err
 		}
 	}
 	for _, evaluable := range n.Right {
-		err := evaluable.PrepareConditions(ctx)
-		if err != nil {
+		if err := evaluable.PrepareConditions(ctx); err != nil {
 			return err
 		}
 	}
@@ -425,7 +457,7 @@ func (n *ConditionEither) Evaluate(ctx context.Context, executionPath string) (b
 		}
 	}
 
-	return len(matchRules) > 0, matchRules
+	return true, matchRules
 }
 
 var _ Evaluable = (*ConditionEither)(nil) // Ensure ConditionEither implements the Evaluable interface.
@@ -441,7 +473,7 @@ func Either(condition Condition, left, right []Evaluable) Evaluable {
 	}
 }
 
-// Not is a helper function that takes a Condition and returns a Conditiona with
+// Not is a helper function that takes a Condition and returns a Condition with
 // the logical negation of the Condition's result.
 func Not(condition Condition) Condition {
 	return &NotCondition{
@@ -595,17 +627,13 @@ func (o *OrRules) Name() string {
 	return "orRules"
 }
 
-// Prepare implements the Rule interface for OrRules. It calls Prepare() on each
-// Rule. If any child Rule's Prepare() returns nil, it returns nil immediately.
-// If all rules fail, it returns all errors.
+// Prepare implements the Rule interface for OrRules. It calls Prepare() on
+// every child Rule: preparation is setup work, so all rules must be prepared
+// regardless of the OR semantics used by Validate. If any child Rule's
+// Prepare() returns an error, it stops and returns that error immediately.
 func (o *OrRules) Prepare(ctx context.Context) error {
-	if len(o.Rules) == 0 {
-		return nil
-	}
-
 	for _, rule := range o.Rules {
-		err := rule.Prepare(ctx)
-		if err != nil {
+		if err := rule.Prepare(ctx); err != nil {
 			return err
 		}
 	}
@@ -861,6 +889,9 @@ func (r *TypedRuleDataFunc[In, T]) Prepare(ctx context.Context) error {
 	}
 
 	if r.prepare == nil {
+		// No prepare step: mark as prepared with the zero value of T so
+		// Validate can run.
+		r.hasData = true
 		return nil
 	}
 
@@ -886,7 +917,7 @@ func (r *TypedRuleDataFunc[In, T]) Validate(ctx context.Context) error {
 	}
 	typedInput, ok := input.(In)
 	if !ok {
-		var zero T
+		var zero In
 		return Error{
 			Field: r.name,
 			Err:   fmt.Sprintf("expected input of type %T, got %T", zero, input),

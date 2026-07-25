@@ -71,8 +71,6 @@ func ValidateMulti(ctx context.Context, targets []Target, hooks ProcessingHooks,
 	preparedRules := make(map[int][]Rule)
 	// create a slice to hold errors
 	errs := make([]error, 0, len(targets))
-	// rulesCounter is used to count the number of rules
-	rulesCounter := 0
 
 	for i := range targets {
 		// prepare the rule for evaluation
@@ -89,7 +87,6 @@ func ValidateMulti(ctx context.Context, targets []Target, hooks ProcessingHooks,
 
 			// If the rule is valid, append it to the prepared rules
 			preparedRules[i] = append(preparedRules[i], rule)
-			rulesCounter++
 		}
 	}
 
@@ -113,7 +110,7 @@ func ValidateMulti(ctx context.Context, targets []Target, hooks ProcessingHooks,
 
 	if hooks.AfterValidateRules != nil {
 		if err := hooks.AfterValidateRules(ctx); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
 
@@ -180,7 +177,7 @@ func Validate(ctx context.Context, tree Evaluable, hooks ProcessingHooks, name s
 
 	if hooks.AfterValidateRules != nil {
 		if err := hooks.AfterValidateRules(ctx); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
 

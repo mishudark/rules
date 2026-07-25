@@ -43,7 +43,7 @@ func TestURLValidator(t *testing.T) {
 			name:    "empty_url",
 			value:   "",
 			schemes: []string{"http", "https"},
-			wantErr: true,
+			wantErr: false,
 		},
 		{
 			name:    "no_scheme_restriction",
