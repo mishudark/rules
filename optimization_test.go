@@ -78,9 +78,12 @@ func TestPureConditionPruning(t *testing.T) {
 		}
 	})
 
-	// Case 3: Impure condition returns false. Children SHOULD be prepared (because we don't check validity during prepare for impure).
-	// Note: The current logic for impure conditions is: Prepare condition -> Prepare children.
-	// Validity check happens at Evaluate time.
+	// Case 3: Impure condition returns false. Both the condition AND its
+	// children are prepared. This is intentional: impure Prepare() calls
+	// fan out data fetches that a dataloader is expected to batch and
+	// deduplicate (single round-trip for the whole tree). Short-circuiting
+	// children would serialize those fetches across branches (N+1 problem).
+	// The IsValid check happens at Evaluate time.
 	t.Run("ImpureFalse_PreparesChildren", func(t *testing.T) {
 		child := &MockEvaluable{}
 		condition := &MockImpureCondition{name: "impureFalse", valid: false}
@@ -95,7 +98,27 @@ func TestPureConditionPruning(t *testing.T) {
 			t.Error("Expected impure condition to be prepared.")
 		}
 		if !child.prepared {
-			t.Error("Expected child to be prepared when condition is impure (even if invalid), but it wasn't.")
+			t.Error("Expected child to be prepared even when impure condition is false (dataloader batching), but it wasn't.")
+		}
+	})
+
+	// Case 4: Impure condition returns true. Both the condition and its
+	// children SHOULD be prepared.
+	t.Run("ImpureTrue_PreparesChildren", func(t *testing.T) {
+		child := &MockEvaluable{}
+		condition := &MockImpureCondition{name: "impureTrue", valid: true}
+
+		node := Node(condition, child)
+		err := node.PrepareConditions(ctx)
+		if err != nil {
+			t.Fatalf("PrepareConditions failed: %v", err)
+		}
+
+		if !condition.prepared {
+			t.Error("Expected impure condition to be prepared.")
+		}
+		if !child.prepared {
+			t.Error("Expected child to be prepared when impure condition is true, but it wasn't.")
 		}
 	})
 }

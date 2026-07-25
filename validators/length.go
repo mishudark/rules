@@ -14,9 +14,9 @@ func MinLengthString(fieldName, value string, min int) rules.Rule {
 				return nil
 			}
 
-			return &rules.Error{
+			return rules.Error{
 				Field: fieldName,
-				Err:   fmt.Sprintf("expected minimum %d, got %d", min, len(value)),
+				Err:   fmt.Sprintf("expected minimum %d, got %d", min, len([]rune(value))),
 				Code:  "MIN_LENGTH_STRING",
 			}
 		},
@@ -31,9 +31,9 @@ func MaxLengthString(fieldName, value string, max int) rules.Rule {
 				return nil
 			}
 
-			return &rules.Error{
+			return rules.Error{
 				Field: fieldName,
-				Err:   fmt.Sprintf("expected maximum %d, got %d", max, len(value)),
+				Err:   fmt.Sprintf("expected maximum %d, got %d", max, len([]rune(value))),
 				Code:  "MAX_LENGTH_STRING",
 			}
 		},
@@ -48,7 +48,7 @@ func MinLengthSlice[T any](fieldName string, value []T, min int) rules.Rule {
 				return nil
 			}
 
-			return &rules.Error{
+			return rules.Error{
 				Field: fieldName,
 				Err:   fmt.Sprintf("expected minimum %d, got %d", min, len(value)),
 				Code:  "MIN_LENGTH_SLICE",
@@ -65,7 +65,7 @@ func MaxLengthSlice[T any](fieldName string, value []T, max int) rules.Rule {
 				return nil
 			}
 
-			return &rules.Error{
+			return rules.Error{
 				Field: fieldName,
 				Err:   fmt.Sprintf("expected maximum %d, got %d", max, len(value)),
 				Code:  "MAX_LENGTH_SLICE",
