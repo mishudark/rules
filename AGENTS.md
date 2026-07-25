@@ -264,7 +264,7 @@ The `IsPure()` method is critical:
 Use `NewCondition()` for pure conditions, `NewConditionSideEffect()` or `NewTypedConditionWithPrepare()` for impure ones.
 
 ### 6.3 State Storage and Concurrency ⚠️
-Rules/conditions with `Prepare()` may store state (e.g., `TypedRuleDataFunc`, `TypedConditionWithPrepare`). These are **NOT safe for concurrent use**:
+Trees made only of pure rules/conditions are safe to share across goroutines. However, rules/conditions with `Prepare()` may store state (e.g., `TypedRuleDataFunc`, `TypedConditionWithPrepare`). These are **NOT safe for concurrent use**:
 
 ```go
 // ✅ CORRECT: Create tree per validation
@@ -283,12 +283,13 @@ for _, user := range users {
 ```
 
 ### 6.4 Execution Path Tracing
-Rules track their execution path through the tree:
+Execution paths are recorded in an opt-in, race-free `ExecutionTrace` carried by context (rules are never mutated during evaluation):
 ```go
-rule.SetExecutionPath(path)  // Set during evaluation
-rule.GetExecutionPath()      // Get for debugging/logging
+ctx, trace := rules.WithExecutionTrace(ctx)
+err := rules.Validate(ctx, tree, hooks, "name")
+path := trace.Path(rule)  // e.g. "name -> root -> cond -> leafNode -> rule1"
 ```
-Tests verify this path to ensure correct tree traversal.
+Tests verify this path to ensure correct tree traversal. The legacy `SetExecutionPath`/`GetExecutionPath` methods are deprecated.
 
 ### 6.5 Type Checking Options
 Multiple ways to check types, with different performance characteristics:

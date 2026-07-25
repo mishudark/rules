@@ -17,7 +17,7 @@ func TestTypedRuleDataFunc_ValidateTypeMismatch_ReportsInType(t *testing.T) {
 	type regInType struct{ Name string }
 	type regTType struct{ Perms string }
 
-	rule := NewTypedRuleWithPrepare[regInType, regTType](
+	rule := NewTypedRuleWithPrepare(
 		"checkPerms",
 		func(ctx context.Context, in regInType) (regTType, error) {
 			return regTType{Perms: "ok"}, nil
@@ -190,4 +190,193 @@ func TestConditionEither_PrepareConditions_DataloaderBatching(t *testing.T) {
 			t.Error("right branch (pure false) should be prepared")
 		}
 	}
+}
+
+// Regression test: NewTypedRuleWithPrepare with a nil prepare function must
+// still allow Validate to run (with the zero value of T). Previously Prepare
+// returned nil without setting hasData, so Validate always failed with
+// DATA_NOT_PREPARED.
+func TestTypedRuleWithPrepare_NilPrepare_ValidateRuns(t *testing.T) {
+	t.Parallel()
+
+	type regIn struct{ Name string }
+	type regT struct{ Perms string }
+
+	called := false
+	rule := NewTypedRuleWithPrepare(
+		"nilPrepare",
+		nil,
+		func(ctx context.Context, in regIn, data regT) error {
+			called = true
+			return nil
+		},
+	)
+
+	ctx := WithRegistry(context.Background(), NewDataRegistry(regIn{Name: "alice"}))
+	if err := rule.Prepare(ctx); err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+	if err := rule.Validate(ctx); err != nil {
+		t.Fatalf("Validate failed: %v", err)
+	}
+	if !called {
+		t.Fatal("expected validate function to be called")
+	}
+}
+
+// Regression test: IsNil/IsNotNil must handle all nil-able kinds (maps,
+// slices, etc.), not just pointers. Previously a nil map or slice in the
+// registry was reported as "not nil".
+func TestIsNil_AllNilableKinds(t *testing.T) {
+	t.Parallel()
+
+	var nilMap map[string]int
+	var nilSlice []string
+	var nilPtr *int
+	notNilMap := map[string]int{}
+
+	testCases := []struct {
+		name    string
+		data    any
+		wantNil bool
+	}{
+		{name: "nil map", data: nilMap, wantNil: true},
+		{name: "nil slice", data: nilSlice, wantNil: true},
+		{name: "nil pointer", data: nilPtr, wantNil: true},
+		{name: "untyped nil", data: nil, wantNil: true},
+		{name: "non-nil map", data: notNilMap, wantNil: false},
+		{name: "non-nil value", data: 42, wantNil: false},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx := WithRegistry(context.Background(), NewDataRegistry(tc.data))
+			if got := IsNil("isNil").IsValid(ctx); got != tc.wantNil {
+				t.Errorf("IsNil = %v, want %v", got, tc.wantNil)
+			}
+			if got := IsNotNil("isNotNil").IsValid(ctx); got == tc.wantNil {
+				t.Errorf("IsNotNil = %v, want %v", got, !tc.wantNil)
+			}
+		})
+	}
+}
+
+// Regression test: HasField and FieldEquals must not panic when the data is
+// a map with a non-string key type. Previously MapIndex was called with a
+// string key on e.g. map[int]string, which panics.
+func TestHasField_NonStringMapKey_NoPanic(t *testing.T) {
+	t.Parallel()
+
+	ctx := WithRegistry(context.Background(), NewDataRegistry(map[int]string{1: "one"}))
+
+	if HasField("hasField", "name").IsValid(ctx) {
+		t.Error("expected HasField to return false for a map with non-string keys")
+	}
+	if FieldEquals("fieldEquals", "name", "one").IsValid(ctx) {
+		t.Error("expected FieldEquals to return false for a map with non-string keys")
+	}
+}
+
+// Regression test: IsA and IsAssignableTo must work with interface types.
+// Previously IsA[SomeInterface] never matched (nil target type) and
+// IsAssignableTo[SomeInterface] panicked in AssignableTo.
+func TestTypeCheckers_InterfaceTypes(t *testing.T) {
+	t.Parallel()
+
+	type stringer interface{ String() string }
+
+	ctx := WithRegistry(context.Background(), NewDataRegistry(regStringer{}))
+
+	if !IsA[stringer]("isStringer").IsValid(ctx) {
+		t.Error("expected IsA[stringer] to match a value implementing the interface")
+	}
+	if IsA[int]("isInt").IsValid(ctx) {
+		t.Error("expected IsA[int] to not match a struct value")
+	}
+	if !IsAssignableTo[stringer]("assignableToStringer").IsValid(ctx) {
+		t.Error("expected IsAssignableTo[stringer] to match a value implementing the interface")
+	}
+}
+
+// Regression test: a failing AfterValidateRules hook must not discard the
+// accumulated validation errors. Previously the hook error replaced them.
+func TestValidate_HookErrorPreservesValidationErrors(t *testing.T) {
+	t.Parallel()
+
+	validationErr := Error{Field: "f", Err: "boom", Code: "BOOM"}
+	hookErr := Error{Field: "hook", Err: "hook failed", Code: "HOOK_FAIL"}
+
+	tree := Root(Rules(NewRulePure("failing", func() error { return validationErr })))
+	hooks := ProcessingHooks{
+		AfterValidateRules: func(ctx context.Context) error { return hookErr },
+	}
+
+	err := Validate(context.Background(), tree, hooks, "test")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "BOOM") {
+		t.Errorf("expected joined error to contain validation error BOOM, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "HOOK_FAIL") {
+		t.Errorf("expected joined error to contain hook error HOOK_FAIL, got: %v", err)
+	}
+}
+
+// Regression test: OrRules.Prepare must prepare ALL child rules (the OR
+// semantics apply only to Validate) and return the first child's error
+// immediately, without preparing the remaining rules.
+func TestOrRules_PrepareAllFailFast(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	prepareErr := Error{Field: "f", Err: "prepare failed", Code: "PREPARE_FAIL"}
+
+	// Success path: every rule must be prepared.
+	first := &mockPrepareRule{RuleBase: RuleBase{}, name: "first"}
+	second := &mockPrepareRule{RuleBase: RuleBase{}, name: "second"}
+
+	if err := Or(first, second).Prepare(ctx); err != nil {
+		t.Fatalf("expected Prepare to succeed, got: %v", err)
+	}
+	if first.prepares != 1 || second.prepares != 1 {
+		t.Errorf("expected both rules to be prepared once, got first=%d second=%d", first.prepares, second.prepares)
+	}
+
+	// Failure path: return the first error immediately, skip the rest.
+	failing := &mockPrepareRule{RuleBase: RuleBase{}, name: "failing", err: prepareErr}
+	skipped := &mockPrepareRule{RuleBase: RuleBase{}, name: "skipped"}
+
+	err := Or(failing, skipped).Prepare(ctx)
+	if err == nil {
+		t.Fatal("expected Prepare to fail")
+	}
+	if !strings.Contains(err.Error(), "PREPARE_FAIL") {
+		t.Errorf("expected the child's prepare error, got: %v", err)
+	}
+	if skipped.prepares != 0 {
+		t.Errorf("expected rules after a failure to not be prepared, got %d calls", skipped.prepares)
+	}
+}
+
+type regStringer struct{}
+
+func (regStringer) String() string { return "regStringer" }
+
+type mockPrepareRule struct {
+	RuleBase
+	name     string
+	err      error
+	prepares int
+}
+
+func (m *mockPrepareRule) Name() string { return m.name }
+func (m *mockPrepareRule) Prepare(context.Context) error {
+	m.prepares++
+	return m.err
+}
+func (m *mockPrepareRule) Validate(context.Context) error {
+	return nil
 }

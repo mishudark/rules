@@ -66,12 +66,11 @@ func TestValidateTree(t *testing.T) {
 		},
 	}
 
-	ctx := context.Background()
-
 	for _, tc := range tt {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
+			ctx, trace := WithExecutionTrace(context.Background())
 			_, rules := tc.tree.Evaluate(ctx, "tree")
 			length := len(rules)
 
@@ -86,8 +85,8 @@ func TestValidateTree(t *testing.T) {
 			}
 
 			for i, rule := range rules {
-				if rule.GetExecutionPath() != tc.executionPaths[i] {
-					t.Errorf("index: %d\nexpected: %s\ngot: %s", i, tc.executionPaths[i], rule.GetExecutionPath())
+				if trace.Path(rule) != tc.executionPaths[i] {
+					t.Errorf("index: %d\nexpected: %s\ngot: %s", i, tc.executionPaths[i], trace.Path(rule))
 				}
 			}
 		})
@@ -443,8 +442,7 @@ func TestRulePureNilFunc(t *testing.T) {
 		t.Error("expected error for nil rule function")
 	}
 
-	var e Error
-	if errors.As(err, &e) {
+	if e, ok := errors.AsType[Error](err); ok {
 		if e.Code != "RULE_FUNC_NIL" {
 			t.Errorf("expected RULE_FUNC_NIL code, got %q", e.Code)
 		}

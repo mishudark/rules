@@ -32,9 +32,7 @@ func decimalValidator(value string, maxDigits, decimalPlaces int) error {
 		}
 	}
 
-	if strings.HasPrefix(integerPart, "-") {
-		integerPart = integerPart[1:]
-	}
+	integerPart = strings.TrimPrefix(integerPart, "-")
 
 	if len(integerPart)+len(fractionalPart) > maxDigits {
 		return rules.Error{

@@ -11,12 +11,11 @@ import (
 
 // urlValidator validates that a given value is a valid URL.
 // It can also check against a list of allowed schemes (e.g., "http", "https").
+// It considers an empty string as valid, following the package convention
+// (use a separate 'Required' rule if the URL must be present).
 func urlValidator(value string, schemes []string) error {
 	if value == "" {
-		return rules.Error{
-			Code: "URL_CANNOT_BE_EMPTY",
-			Err:  "url cannot be empty",
-		}
+		return nil
 	}
 
 	parsedURL, err := url.ParseRequestURI(value)
@@ -41,6 +40,7 @@ func urlValidator(value string, schemes []string) error {
 
 // URL returns a new Rule that validates if a string is a valid URL.
 // If schemes are provided, it also validates that the URL's scheme is one of the allowed schemes.
+// It considers an empty string as valid (use a separate 'Required' rule if the URL must be present).
 func URL(value string, schemes []string) rules.Rule {
 	return rules.NewRulePure("url_validator", func() error {
 		return urlValidator(value, schemes)
