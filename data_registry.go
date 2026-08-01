@@ -75,6 +75,20 @@ func ValidateWithData(ctx context.Context, tree Evaluable, hooks ProcessingHooks
 	return Validate(ctx, tree, hooks, name)
 }
 
+// EvaluateMetricsWithData evaluates the tree for validation errors and metric
+// indicators with the provided data. This is a convenience function that
+// wraps data in a registry and executes EvaluateMetrics.
+//
+// Example:
+//
+//	user := User{Name: "Alice", Age: 25}
+//	report, err := rules.EvaluateMetricsWithData(ctx, tree, hooks, "healthCheck", user)
+func EvaluateMetricsWithData(ctx context.Context, tree Evaluable, hooks ProcessingHooks, name string, data any) (Report, error) {
+	reg := NewDataRegistry(data)
+	ctx = WithRegistry(ctx, reg)
+	return EvaluateMetrics(ctx, tree, hooks, name)
+}
+
 type TreeAndData struct {
 	Tree Evaluable
 	Data any
@@ -94,6 +108,24 @@ func ValidateMultiWithData(ctx context.Context, targets []TreeAndData, hooks Pro
 		}
 	}
 	return ValidateMulti(ctx, targetsWithCtx, hooks, name)
+}
+
+// EvaluateMetricsMultiWithData executes multiple targets with their respective
+// data, collecting and aggregating metric indicators per target. This allows
+// evaluating multiple different data objects against the same or different
+// trees in a single batched pass.
+func EvaluateMetricsMultiWithData(ctx context.Context, targets []TreeAndData, hooks ProcessingHooks, name string,
+) ([]Report, error) {
+	targetsWithCtx := make([]Target, len(targets))
+	for i, t := range targets {
+		reg := NewDataRegistry(t.Data)
+		targetCtx := WithRegistry(ctx, reg)
+		targetsWithCtx[i] = Target{
+			tree: t.Tree,
+			ctx:  targetCtx,
+		}
+	}
+	return EvaluateMetricsMulti(ctx, targetsWithCtx, hooks, name)
 }
 
 // IsType checks if the data in context is exactly the target type using reflection.

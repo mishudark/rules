@@ -18,6 +18,7 @@ A flexible **rule engine** for Go that lets you build and evaluate complex valid
 - **Form validation** — validate complex forms with conditions
 - **Business rules** — implement decision trees that non-developers can visualize
 - **Reusable validation** — build rule trees once, validate against different data
+- **Key metric indicators (KMIs)** — counters, histograms, and scores computed in the same tree as validation
 
 ---
 
@@ -445,6 +446,75 @@ func main() {
 
 ---
 
+## Key Metric Indicators (KMIs)
+
+The same tree engine also computes key metric indicators dynamically. Instead
+of only returning pass/fail, a rule can **carry metric outcomes** — counters,
+histograms, scores, or valid/invalid observations — alongside its validation
+result. Use `EvaluateMetrics` (or `EvaluateMetricsMulti` for batches) instead
+of `Validate`:
+
+```go
+tree := rules.Root(
+    rules.Node(
+        rules.NewConditionPure("isPremium", func() bool { return user.Plan == "premium" }),
+        rules.Rules(
+            rules.NewMetricRulePure("mrr", rules.KindCounter, "mrr", func() (rules.Outcome, error) {
+                return rules.CounterValue(1250.5), nil
+            }),
+        ),
+    ),
+    rules.Rules(
+        rules.NewTypedMetricRule[User]("engagement", rules.KindScore, "engagement",
+            func(ctx context.Context, u User) (rules.Outcome, error) {
+                return rules.ScoreValue(u.Engagement, 1), nil
+            }),
+        rules.NewTypedMetricRule[User]("latency", rules.KindHistogram, "latency_ms",
+            func(ctx context.Context, u User) (rules.Outcome, error) {
+                hist := rules.NewHistogram([]float64{50, 100, 250, 1000, math.Inf(1)})
+                for _, v := range u.Latencies { hist.Observe(v) }
+                return rules.HistogramValue(hist), nil
+            }),
+        rules.NewTypedMetricRule[User]("compliant", rules.KindValid, "compliant",
+            func(ctx context.Context, u User) (rules.Outcome, error) {
+                return rules.ValidValue(u.Compliant, nil), nil
+            }),
+    ),
+)
+
+report, err := rules.EvaluateMetricsWithData(ctx, tree, hooks, "health", user)
+// report.Valid, report.Errors, report.Metrics["mrr"].Count,
+// report.Metrics["latency"].Histogram, report.Metrics["engagement"].Score
+```
+
+A metric-carrying rule returns both an `Outcome` and an `error`, so a single
+rule both computes the KMI and decides pass/fail. A rule that fails still
+reports its observation (e.g. counting attempts), and the error is surfaced
+in `report.Errors`.
+
+**Extending any rule:** any `Rule` can carry metrics by calling `rules.Emit`
+from its `Validate` method — no dedicated constructor needed:
+
+```go
+rule := rules.NewTypedRule[User]("itemsInOrder", func(ctx context.Context, u User) error {
+    rules.Emit(ctx, rules.CounterValue(float64(len(u.Order.Items))))
+    return nil
+})
+```
+
+**Aggregation:** same-name outcomes are combined when the report is built.
+Defaults are kind-specific — counters sum, histograms merge bucket-wise,
+scores weight-average — and can be overridden via the `Aggregation` field on
+`Outcome`.
+
+**Batching:** the `Prepare` step of `NewTypedMetricRuleWithPrepare` runs in
+the same rule-prepare phase, so a dataloader batches metric fetches together
+with rule and condition fetches in a single round-trip. Outcomes are only
+collected by `EvaluateMetrics`; `Validate` ignores them, so validation-only
+callers are unaffected.
+
+---
+
 ## API Reference
 
 ### Core Interfaces
@@ -479,6 +549,10 @@ func main() {
 | `rules.Validate(ctx, tree, hooks, name)` | Validates using registry already in context |
 | `rules.ValidateMulti(ctx, targets, hooks, name)` | Batch validation of multiple targets |
 | `rules.ValidateMultiWithData(ctx, targets, hooks, name, ...data)` | Batch validation with data |
+| `rules.EvaluateMetrics(ctx, tree, hooks, name)` | Evaluates tree, returns `(Report, error)` with aggregated metrics |
+| `rules.EvaluateMetricsWithData(ctx, tree, hooks, name, data)` | Evaluates with data (convenience) |
+| `rules.EvaluateMetricsMulti(ctx, targets, hooks, name)` | Batch evaluation, one `Report` per target |
+| `rules.EvaluateMetricsMultiWithData(ctx, targets, hooks, name, ...data)` | Batch evaluation with data |
 | `rules.Get(ctx)` | Gets raw data from context |
 | `rules.GetAs[T](ctx)` | Gets typed data from context |
 | `rules.TypeOf(ctx)` | Returns `reflect.Type` of data in context |
@@ -492,6 +566,23 @@ func main() {
 | `rules.NewTypedRule[T](name, fn)` | Type-safe rule (pure) |
 | `rules.NewTypedRuleWithPrepare[In, T](name, prepare, validate)` | Type-safe rule with Prepare (impure) |
 | `rules.NewRulePure(name, fn)` | Closure-based rule (pure, legacy) |
+
+### Metric-Carrying Rules
+
+| Function | Description |
+|----------|-------------|
+| `rules.NewMetricRulePure(name, kind, field, fn)` | Closure-based rule carrying a metric (pure, legacy) |
+| `rules.NewMetricRule(name, kind, field, fn)` | Rule carrying a metric with `any` data (pure) |
+| `rules.NewTypedMetricRule[T](name, kind, field, fn)` | Type-safe rule carrying a metric (pure) |
+| `rules.NewTypedMetricRuleWithPrepare[In, T](name, kind, field, prepare, fn)` | Type-safe rule carrying a metric with Prepare (impure) |
+| `rules.Emit(ctx, outcome)` | Record a metric outcome from any rule's `Validate` |
+| `rules.CounterValue(v)` | Build a counter `Outcome` |
+| `rules.ScoreValue(score, weight)` | Build a score `Outcome` |
+| `rules.HistogramValue(h)` | Build a histogram `Outcome` |
+| `rules.ValidValue(valid, err)` | Build a valid/invalid `Outcome` |
+| `rules.NewHistogram(buckets)` | Create an empty histogram with le boundaries |
+
+`Kind` values: `KindValid`, `KindCounter`, `KindHistogram`, `KindScore`. Outcomes are aggregated by name in the returned `Report.Metrics`; see [Key Metric Indicators](#key-metric-indicators-kmis).
 
 ### Condition Constructors
 

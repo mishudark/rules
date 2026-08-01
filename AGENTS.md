@@ -70,8 +70,9 @@ Read this before touching anything in `rules.go`, `conditions.go`,
 |------|------|
 | `rules.go` | Tree node types, `Rule` implementations, `RuleBase` |
 | `conditions.go` | `Condition` implementations (pure, impure, typed, type-checks) |
-| `validation.go` | The 4-step driver (`Validate`, `ValidateMulti`, hooks) |
+| `validation.go` | The 4-step driver (`Validate`, `ValidateMulti`, `EvaluateMetrics`, hooks) |
 | `data_registry.go` | Context-bound data access (`Get`, `GetAs`, `WithRegistry`) |
+| `metrics.go` | Metric-carrying rules, `Outcome`/`Kind`/`Histogram`, report aggregation |
 | `validators/` | Stateless `Rule` constructors (email, length, url, …) |
 
 **Build vs Evaluate lifetime:**
@@ -416,6 +417,28 @@ value receiver, so both compile — but callers and tests assert
 `err.(rules.Error)` (see §5), and a `*rules.Error` return silently fails
 that type assertion, masking test failures. Use `return rules.Error{...}`,
 never `return &rules.Error{...}`.
+
+### 6.10 Metric-Carrying Rules (KMIs) 📊
+
+The engine can compute key metric indicators in the same tree as validation.
+A rule carries metrics instead of only pass/fail: `NewMetricRule`,
+`NewTypedMetricRule`, `NewTypedMetricRuleWithPrepare`, or any custom `Rule`
+calling `Emit(ctx, outcome)` from its `Validate`.
+
+**Mechanics (read before touching `metrics.go` or the drivers):**
+- `Emit` writes into an **outcome collector** bound to the validation-phase
+  context by `EvaluateMetrics`/`EvaluateMetricsMulti` (see `withOutcomeCollector`).
+  The collector is a per-evaluation side channel, so **pure metric-carrying
+  rules are not mutated and stay safe to share across goroutines** — a failed
+  validation still records its observation (e.g. counting attempts).
+- Outcomes are aggregated by **name** in `Report.Metrics` with kind defaults:
+  counters sum, histograms merge bucket-wise, scores weight-average
+  (`Aggregation` overrides on `Outcome`). Same name ⇒ same kind.
+- `*WithPrepare` variants store state (`loadedData`/`hasData`) like
+  `TypedRuleDataFunc` and are NOT concurrent-safe (§6.3).
+- `Emit` is a no-op under plain `Validate` (no collector in context), so
+  metric-carrying rules behave exactly like validation rules for existing
+  callers.
 
 ## 7. Adding New Validators
 
