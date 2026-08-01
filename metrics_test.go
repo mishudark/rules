@@ -23,9 +23,9 @@ type loggingMetricRule struct {
 func (r *loggingMetricRule) Name() string                 { return r.name }
 func (r *loggingMetricRule) SetExecutionPath(path string) {}
 func (r *loggingMetricRule) GetExecutionPath() string     { return "" }
-func (r *loggingMetricRule) Prepare(context.Context) error {
+func (r *loggingMetricRule) Prepare(context.Context) (any, error) {
 	r.log.add("prepareRule:%s", r.name)
-	return nil
+	return nil, nil
 }
 func (r *loggingMetricRule) Validate(ctx context.Context) error {
 	r.log.add("validateRule:%s", r.name)
@@ -123,7 +123,7 @@ func TestEvaluateMetrics_CustomRuleEmitsMetrics(t *testing.T) {
 	// The "extend a rule" path: any rule can carry metrics by calling Emit.
 	// Two same-name outcomes with AggMax combine to the largest value.
 	maxEmit := func(name string, value float64) Rule {
-		return NewRule(name, func(ctx context.Context, data any) error {
+		return NewTypedRule[string](name, func(ctx context.Context, _ string) error {
 			o := CounterValue(value)
 			o.Name = name
 			o.Aggregation = AggMax
@@ -318,7 +318,7 @@ func TestEvaluateMetrics_Either(t *testing.T) {
 func TestEvaluateMetrics_MixedTree(t *testing.T) {
 	t.Parallel()
 
-	failRule := NewRule("mustFail", func(ctx context.Context, data any) error {
+	failRule := NewTypedRule[metricUser]("mustFail", func(ctx context.Context, _ metricUser) error {
 		return Error{Field: "x", Err: "boom", Code: "BOOM"}
 	})
 

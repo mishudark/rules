@@ -15,8 +15,8 @@ type ConditionFunc struct {
 }
 
 // Prepare implements Condition interface. It's a no-op for pure conditions.
-func (c *ConditionFunc) Prepare(ctx context.Context) error {
-	return nil
+func (c *ConditionFunc) Prepare(ctx context.Context) (any, error) {
+	return nil, nil
 }
 
 // Name returns the condition name.
@@ -63,8 +63,8 @@ type typeChecker struct {
 	targetType reflect.Type
 }
 
-func (c *typeChecker) Prepare(ctx context.Context) error { return nil }
-func (c *typeChecker) Name() string                      { return c.name }
+func (c *typeChecker) Prepare(ctx context.Context) (any, error) { return nil, nil }
+func (c *typeChecker) Name() string                             { return c.name }
 func (c *typeChecker) IsValid(ctx context.Context) bool {
 	data, ok := Get(ctx)
 	if !ok {
@@ -114,8 +114,8 @@ type assignableChecker struct {
 	targetType reflect.Type
 }
 
-func (c *assignableChecker) Prepare(ctx context.Context) error { return nil }
-func (c *assignableChecker) Name() string                      { return c.name }
+func (c *assignableChecker) Prepare(ctx context.Context) (any, error) { return nil, nil }
+func (c *assignableChecker) Name() string                             { return c.name }
 func (c *assignableChecker) IsValid(ctx context.Context) bool {
 	data, ok := Get(ctx)
 	if !ok {
@@ -171,8 +171,8 @@ type genericChecker[T any] struct {
 	name string
 }
 
-func (c *genericChecker[T]) Prepare(ctx context.Context) error { return nil }
-func (c *genericChecker[T]) Name() string                      { return c.name }
+func (c *genericChecker[T]) Prepare(ctx context.Context) (any, error) { return nil, nil }
+func (c *genericChecker[T]) Name() string                             { return c.name }
 func (c *genericChecker[T]) IsValid(ctx context.Context) bool {
 	data, ok := Get(ctx)
 	if !ok {
@@ -352,40 +352,41 @@ func FieldEquals(name string, fieldName string, expected any) Condition {
 }
 
 // TypedConditionWithPrepare is a condition that loads data during Prepare
-// and uses it during IsValid. This enables separating data loading from evaluation.
-// In is the input data type from the DataRegistry, T is the loaded data type.
+// and uses it during IsValid. This enables separating data loading from
+// evaluation. In is the input data type from the DataRegistry, T is the
+// loaded data type.
 //
-// ⚠️ WARNING: This type stores mutable state (loadedData, hasData) set during Prepare() and read during IsValid().
-// It is NOT safe for concurrent use. See NewTypedConditionWithPrepare for details.
+// Prepare retrieves the loaded data and records it in the per-evaluation
+// preparedStore keyed by this condition; IsValid reads it back typed via
+// GetPreparedAs[T]. The condition keeps no state and is safe to share across
+// goroutines: a tree built with it can be reused across many targets.
 type TypedConditionWithPrepare[In any, T any] struct {
-	name       string
-	prepare    func(ctx context.Context, input In) (T, error)
-	condition  func(ctx context.Context, input In, data T) bool
-	loadedData T
-	hasData    bool
+	name      string
+	prepare   func(ctx context.Context, input In) (T, error)
+	condition func(ctx context.Context, input In, data T) bool
 }
 
 var _ Condition = (*TypedConditionWithPrepare[any, any])(nil)
 
-// Prepare retrieves typed input data from context, loads additional data,
-// and stores it for IsValid to use.
-func (c *TypedConditionWithPrepare[In, T]) Prepare(ctx context.Context) error {
+// Prepare retrieves typed input data from context, loads additional data, and
+// records it in the per-evaluation preparedStore keyed by this condition
+// instance.
+func (c *TypedConditionWithPrepare[In, T]) Prepare(ctx context.Context) (any, error) {
 	input, ok := GetAs[In](ctx)
 	if !ok {
 		var zero In
-		return Error{
+		return nil, Error{
 			Field: c.name,
-			Err:   fmt.Sprintf("expected data of type %T, got different type", zero),
+			Err:   fmt.Sprintf("expected input of type %T, got different type", zero),
 			Code:  "TYPE_MISMATCH",
 		}
 	}
 	data, err := c.prepare(ctx, input)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	c.loadedData = data
-	c.hasData = true
-	return nil
+	recordPrepared(ctx, c, data)
+	return data, nil
 }
 
 // Name returns the condition name.
@@ -393,18 +394,20 @@ func (c *TypedConditionWithPrepare[In, T]) Name() string {
 	return c.name
 }
 
-// IsValid evaluates the condition using the data loaded during Prepare.
+// IsValid evaluates the condition using the typed input (read from the data
+// registry) and the typed data Prepare loaded (read back via GetPreparedAs[T]).
 func (c *TypedConditionWithPrepare[In, T]) IsValid(ctx context.Context) bool {
 	input, ok := GetAs[In](ctx)
 	if !ok {
 		return false
 	}
 
-	if !c.hasData {
+	loaded, ok := GetPreparedAs[T](ctx, c)
+	if !ok {
 		return false
 	}
 
-	return c.condition(ctx, input, c.loadedData)
+	return c.condition(ctx, input, loaded)
 }
 
 // IsPure returns false as this condition has side effects during Prepare.
@@ -415,28 +418,15 @@ func (c *TypedConditionWithPrepare[In, T]) IsPure() bool {
 // NewTypedConditionWithPrepare creates a type-safe condition with Prepare support.
 // In is the input data type from the DataRegistry, T is the loaded data type.
 // The prepare function receives typed input data and loads additional data,
-// which is then passed to the condition function during IsValid.
+// which is then read back typed by the condition function during IsValid.
 //
-// ⚠️ IMPORTANT: This condition stores state (loadedData) and is NOT safe for concurrent
-// use. When validating multiple items concurrently, create one tree per target:
-//
-//	// CORRECT: One tree per target
-//	for _, user := range users {
-//	    tree := buildTree() // Create tree inside loop
-//	    err := rules.ValidateWithData(ctx, tree, hooks, "validate", user)
-//	}
-//
-//	// WRONG: Sharing tree across goroutines causes race conditions
-//	tree := buildTree()
-//	for _, user := range users {
-//	    go func(u User) {
-//	        err := rules.ValidateWithData(ctx, tree, hooks, "validate", u) // RACE!
-//	    }(user)
-//	}
+// Prepare records the loaded data in the per-evaluation preparedStore keyed by
+// this condition; IsValid reads it back via GetPreparedAs[T]. The condition keeps
+// no state, so a tree built with it can be reused and shared across goroutines.
 //
 // Example:
 //
-//	condition := rules.NewTypedConditionWithPrepare(
+//	condition := rules.NewTypedConditionWithPrepare[User, Permissions](
 //	    "userHasPermission",
 //	    func(ctx context.Context, user User) (Permissions, error) {
 //	        return db.LoadPermissions(ctx, user.ID)
@@ -454,6 +444,5 @@ func NewTypedConditionWithPrepare[In any, T any](
 		name:      name,
 		prepare:   prepare,
 		condition: condition,
-		hasData:   false,
 	}
 }

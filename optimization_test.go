@@ -16,9 +16,9 @@ func (m *MockImpureCondition) Name() string {
 	return m.name
 }
 
-func (m *MockImpureCondition) Prepare(ctx context.Context) error {
+func (m *MockImpureCondition) Prepare(ctx context.Context) (any, error) {
 	m.prepared = true
-	return nil
+	return nil, nil
 }
 
 func (m *MockImpureCondition) IsValid(ctx context.Context) bool {

@@ -37,6 +37,12 @@ func NewTarget(ctx context.Context, tree Evaluable) *Target {
 // 3. Prepare the rule for evaluation
 // 4. Validate the prepared rules
 func ValidateMulti(ctx context.Context, targets []Target, hooks ProcessingHooks, name string) error {
+	// Attach a per-target prepared-data store so prepare results for one
+	// target never leak into another when a tree is shared between targets.
+	for i := range targets {
+		targets[i].ctx, _ = withPreparedStore(targets[i].ctx)
+	}
+
 	for _, target := range targets {
 		// Prepare the conditions for evaluation
 		err := target.tree.PrepareConditions(target.ctx)
@@ -78,14 +84,15 @@ func ValidateMulti(ctx context.Context, targets []Target, hooks ProcessingHooks,
 		preparedRules[i] = make([]Rule, 0, len(rules))
 
 		for _, rule := range rules {
-			err := rule.Prepare(targets[i].ctx)
-			if err != nil {
+			if _, err := rule.Prepare(targets[i].ctx); err != nil {
 				// If the rule is not valid, append the error and continue
 				errs = append(errs, err)
 				continue
 			}
 
-			// If the rule is valid, append it to the prepared rules
+			// If the rule is valid, append it to the prepared rules.
+			// Typed rules self-record their prepared data in their Prepare, so
+			// the engine does not need to store it here.
 			preparedRules[i] = append(preparedRules[i], rule)
 		}
 	}
@@ -123,6 +130,12 @@ func ValidateMulti(ctx context.Context, targets []Target, hooks ProcessingHooks,
 // 3. Prepare the rule for evaluation
 // 4. Validate the prepared rules
 func Validate(ctx context.Context, tree Evaluable, hooks ProcessingHooks, name string) error {
+	// Attach a prepared-data store: rules and conditions record the data
+	// they retrieve during Prepare into it, and read it back in
+	// Validate/IsValid. Each evaluation gets its own
+	// store, so shared trees stay safe to reuse across goroutines.
+	ctx, _ = withPreparedStore(ctx)
+
 	// Prepare the conditions for evaluation
 	err := tree.PrepareConditions(ctx)
 	if err != nil {
@@ -150,14 +163,14 @@ func Validate(ctx context.Context, tree Evaluable, hooks ProcessingHooks, name s
 
 	// Prepare the rule for evaluation
 	for _, rule := range rules {
-		err := rule.Prepare(ctx)
-		if err != nil {
+		if _, err := rule.Prepare(ctx); err != nil {
 			// If the rule is not valid, append the error and continue
 			errs = append(errs, err)
 			continue
 		}
 
-		// If the rule is valid, append it to the prepared rules
+		// If the rule is valid, append it to the prepared rules.
+		// Typed rules self-record their prepared data in their Prepare.
 		preparedRules = append(preparedRules, rule)
 	}
 
@@ -199,6 +212,11 @@ func Validate(ctx context.Context, tree Evaluable, hooks ProcessingHooks, name s
 // is used; calling Validate on a tree that contains metric-carrying rules
 // simply ignores their outcomes.
 func EvaluateMetrics(ctx context.Context, tree Evaluable, hooks ProcessingHooks, name string) (Report, error) {
+	// Attach a prepared-data store: rules and conditions record the data
+	// they retrieve during Prepare into it, and read it back in
+	// Validate/IsValid.
+	ctx, _ = withPreparedStore(ctx)
+
 	// Prepare the conditions for evaluation
 	err := tree.PrepareConditions(ctx)
 	if err != nil {
@@ -225,14 +243,14 @@ func EvaluateMetrics(ctx context.Context, tree Evaluable, hooks ProcessingHooks,
 
 	// Prepare the rule for evaluation
 	for _, rule := range rules {
-		err := rule.Prepare(ctx)
-		if err != nil {
+		if _, err := rule.Prepare(ctx); err != nil {
 			// If the rule is not valid, append the error and continue
 			errs = append(errs, err)
 			continue
 		}
 
-		// If the rule is valid, append it to the prepared rules
+		// If the rule is valid, append it to the prepared rules.
+		// Typed rules self-record their prepared data in their Prepare.
 		preparedRules = append(preparedRules, rule)
 	}
 
@@ -282,6 +300,12 @@ func EvaluateMetrics(ctx context.Context, tree Evaluable, hooks ProcessingHooks,
 // are prepared before any evaluation, and all rules are prepared before any
 // validation runs.
 func EvaluateMetricsMulti(ctx context.Context, targets []Target, hooks ProcessingHooks, name string) ([]Report, error) {
+	// Attach a per-target prepared-data store so prepare results for one
+	// target never leak into another when a tree is shared between targets.
+	for i := range targets {
+		targets[i].ctx, _ = withPreparedStore(targets[i].ctx)
+	}
+
 	// Phase A: prepare the conditions for all targets
 	for _, target := range targets {
 		err := target.tree.PrepareConditions(target.ctx)
@@ -316,7 +340,7 @@ func EvaluateMetricsMulti(ctx context.Context, targets []Target, hooks Processin
 
 	for i, target := range targets {
 		for _, rule := range results[i] {
-			if err := rule.Prepare(target.ctx); err != nil {
+			if _, err := rule.Prepare(target.ctx); err != nil {
 				targetErrs[i] = append(targetErrs[i], err)
 				continue
 			}

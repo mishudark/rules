@@ -146,3 +146,121 @@ func TypeOf(ctx context.Context) reflect.Type {
 	}
 	return reflect.TypeOf(data)
 }
+
+type preparedStoreKey struct{}
+
+// preparedStore holds the data that rules and conditions retrieve during their
+// Prepare step, keyed by the rule or condition instance. It is created by the
+// engine once per evaluation (once per target in multi-target runs) and travels
+// in the context.
+//
+// Per-evaluation scoping is what makes Prepare-based rules and conditions safe
+// to share across goroutines: the data a rule reads back in Validate comes from
+// its own evaluation's store, never from the rule/condition struct.
+//
+// The store is read with [GetPreparedAs] (typed) or [GetPrepared], and written
+// with [PutPrepared]. Built-in typed rules and conditions self-record in their
+// Prepare; custom implementations may use [PutPrepared] the same way.
+type preparedStore struct {
+	data map[any]any
+}
+
+// get returns the prepared data for the given rule or condition.
+func (s *preparedStore) get(key any) (any, bool) {
+	if s == nil {
+		return nil, false
+	}
+	data, ok := s.data[key]
+	return data, ok
+}
+
+// put stores the prepared data for the given rule or condition.
+func (s *preparedStore) put(key any, value any) {
+	if s == nil {
+		return
+	}
+	s.data[key] = value
+}
+
+// withPreparedStore returns a context carrying a fresh preparedStore and the
+// store itself.
+func withPreparedStore(ctx context.Context) (context.Context, *preparedStore) {
+	store := &preparedStore{data: make(map[any]any)}
+	return context.WithValue(ctx, preparedStoreKey{}, store), store
+}
+
+// preparedStoreFromContext returns the preparedStore attached to ctx, or nil.
+func preparedStoreFromContext(ctx context.Context) *preparedStore {
+	store, _ := ctx.Value(preparedStoreKey{}).(*preparedStore)
+	return store
+}
+
+// recordPrepared stores data keyed by key in the per-evaluation preparedStore.
+// It is a no-op when no store is attached to ctx (e.g. when a rule/condition is
+// exercised outside the engine). Built-in typed rules and conditions use this
+// in their Prepare so the same data is available to their Validate/IsValid.
+func recordPrepared(ctx context.Context, key, data any) {
+	if store := preparedStoreFromContext(ctx); store != nil {
+		store.put(key, data)
+	}
+}
+
+// PutPrepared records data keyed by key in the per-evaluation preparedStore.
+// Custom Rule or Condition implementations that fetch data in their Prepare
+// call this so they can read it back in Validate / IsValid with [GetPreparedAs]
+// (typed) or [GetPrepared] (untyped). It is a no-op when no store is attached
+// to ctx (which only happens outside the engine entry points).
+//
+// Use the rule or condition instance itself as the key so the data is scoped to
+// it and the same tree can be reused across goroutines without cross-talk.
+func PutPrepared(ctx context.Context, key, data any) {
+	recordPrepared(ctx, key, data)
+}
+
+// GetPrepared returns the data the given rule or condition recorded during its
+// Prepare step, or nil when it has none. Prefer [GetPreparedAs] for type-safe
+// access.
+func GetPrepared(ctx context.Context, key any) any {
+	store := preparedStoreFromContext(ctx)
+	if store == nil {
+		return nil
+	}
+	data, _ := store.get(key)
+	return data
+}
+
+// GetPreparedAs returns the typed data the given rule or condition recorded
+// during its Prepare step. The boolean is false when no store is attached, the
+// key has no recorded data, or the recorded data is not of type T.
+//
+// Generic injection point: typed rules and conditions call this from their
+// Validate / IsValid to pull back the data they returned from Prepare, without
+// converting to and from any at the interface boundary.
+//
+// Example:
+//
+//	func (r *MyRule) Prepare(ctx context.Context) (any, error) {
+//	    perms, err := loadPermissions(ctx)
+//	    rules.PutPrepared(ctx, r, perms)
+//	    return perms, err
+//	}
+//	func (r *MyRule) Validate(ctx context.Context) error {
+//	    perms, ok := rules.GetPreparedAs[Permissions](ctx, r)
+//	    if !ok {
+//	        return errors.New("permissions not prepared")
+//	    }
+//	    return check(perms)
+//	}
+func GetPreparedAs[T any](ctx context.Context, key any) (T, bool) {
+	var zero T
+	store := preparedStoreFromContext(ctx)
+	if store == nil {
+		return zero, false
+	}
+	data, ok := store.get(key)
+	if !ok {
+		return zero, false
+	}
+	typed, ok := data.(T)
+	return typed, ok
+}

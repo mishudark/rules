@@ -3,6 +3,7 @@ package rules
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 )
 
@@ -192,11 +193,7 @@ func TestNewRule(t *testing.T) {
 	t.Parallel()
 
 	tree := Rules(
-		NewRule("validateEmail", func(ctx context.Context, data any) error {
-			user, ok := data.(testUser)
-			if !ok {
-				return fmt.Errorf("expected testUser, got %T", data)
-			}
+		NewTypedRule("validateEmail", func(ctx context.Context, user testUser) error {
 			if user.Email == "" {
 				return fmt.Errorf("email is required")
 			}
@@ -413,8 +410,9 @@ func TestNewTypedRuleWithPrepare(t *testing.T) {
 	// Test successful case
 	user := testUser{Name: "Alice", Email: "alice@example.com", Age: 25}
 	ctx := WithRegistry(context.Background(), NewDataRegistry(user))
+	ctx, _ = withPreparedStore(ctx)
 
-	err := rule.Prepare(ctx)
+	_, err := rule.Prepare(ctx)
 	if err != nil {
 		t.Errorf("unexpected prepare error: %v", err)
 	}
@@ -435,8 +433,9 @@ func TestNewTypedRuleWithPrepare(t *testing.T) {
 	validateCalled = false
 	user2 := testUser{Name: "Bob", Email: "", Age: 25}
 	ctx = WithRegistry(context.Background(), NewDataRegistry(user2))
+	ctx, _ = withPreparedStore(ctx)
 
-	err = rule.Prepare(ctx)
+	_, err = rule.Prepare(ctx)
 	if err == nil {
 		t.Error("expected prepare error for empty email")
 	}
@@ -449,9 +448,9 @@ func TestNewTypedRuleWithPrepare(t *testing.T) {
 	validateCalled = false
 	user3 := testUser{Name: "Charlie", Email: "charlie@example.com", Age: 16}
 	ctx = WithRegistry(context.Background(), NewDataRegistry(user3))
+	ctx, _ = withPreparedStore(ctx)
 
-	err = rule.Prepare(ctx)
-	if err != nil {
+	if _, err := rule.Prepare(ctx); err != nil {
 		t.Errorf("unexpected prepare error: %v", err)
 	}
 
@@ -474,8 +473,8 @@ func TestNewTypedRuleWithPrepare(t *testing.T) {
 	)
 
 	ctx = WithRegistry(context.Background(), NewDataRegistry(user))
-	err = ruleNoValidate.Prepare(ctx)
-	if err != nil {
+	ctx, _ = withPreparedStore(ctx)
+	if _, err := ruleNoValidate.Prepare(ctx); err != nil {
 		t.Error("unexpected error for type mismatch in prepare")
 	}
 
@@ -502,7 +501,7 @@ func TestNewTypedRuleWithPrepare_TypeMismatch(t *testing.T) {
 	product := testProduct{ID: 1}
 	ctx := WithRegistry(context.Background(), NewDataRegistry(product))
 
-	err := rule.Prepare(ctx)
+	_, err := rule.Prepare(ctx)
 	if err == nil {
 		t.Error("expected error for type mismatch in prepare")
 	}
@@ -529,7 +528,7 @@ func TestNewTypedRuleWithPrepare_NoData(t *testing.T) {
 	// No data in context
 	ctx := context.Background()
 
-	err := rule.Prepare(ctx)
+	_, err := rule.Prepare(ctx)
 	if err == nil {
 		t.Error("expected error when no data in context for prepare")
 	}
@@ -575,4 +574,98 @@ func TestIsType(t *testing.T) {
 			t.Error("expected IsType to return false when no data")
 		}
 	})
+}
+
+// TestSharedTreeWithPrepare_Concurrent proves the reuse goal of the Prepare
+// refactor: rules and conditions that retrieve data during Prepare keep no
+// state, so a single tree built with them can be shared across goroutines
+// without races or cross-talk (each evaluation injects its own prepared data).
+func TestSharedTreeWithPrepare_Concurrent(t *testing.T) {
+	t.Parallel()
+
+	type account struct {
+		ID    string
+		Limit float64
+	}
+
+	tree := Node(
+		NewTypedConditionWithPrepare(
+			"isActive",
+			func(ctx context.Context, acc account) (bool, error) {
+				return acc.ID != "", nil
+			},
+			func(ctx context.Context, acc account, active bool) bool {
+				return active
+			},
+		),
+		Rules(
+			NewTypedRuleWithPrepare(
+				"limitCheck",
+				func(ctx context.Context, acc account) (float64, error) {
+					return acc.Limit * 2, nil
+				},
+				func(ctx context.Context, acc account, allowed float64) error {
+					if allowed < 10 {
+						return Error{Field: acc.ID, Err: "below limit", Code: "LIMIT"}
+					}
+					return nil
+				},
+			),
+		),
+	)
+
+	const goroutines = 32
+	var wg sync.WaitGroup
+	errs := make(chan error, goroutines)
+
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			acc := account{ID: fmt.Sprintf("acc-%d", i), Limit: float64(i + 1)}
+			err := ValidateWithData(context.Background(), tree, ProcessingHooks{}, "check", acc)
+			if i+1 >= 5 {
+				// Limit*2 >= 10: valid
+				if err != nil {
+					errs <- fmt.Errorf("account %d should pass: %v", i, err)
+				}
+			} else if err == nil {
+				errs <- fmt.Errorf("account %d should fail", i)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("shared tree concurrent validation failed: %v", err)
+	}
+}
+
+// TestValidateMultiWithData_NoPreparedDataCrossTalk verifies that prepared
+// data is scoped per target: two targets sharing one tree must each see their
+// own Prepare results, even across the batched multi-target phases.
+func TestValidateMultiWithData_NoPreparedDataCrossTalk(t *testing.T) {
+	t.Parallel()
+
+	tree := Rules(
+		NewTypedRuleWithPrepare(
+			"doubled",
+			func(ctx context.Context, v int) (int, error) { return v * 2, nil },
+			func(ctx context.Context, v, doubled int) error {
+				if doubled != v*2 {
+					return fmt.Errorf("prepared data leaked: got %d, want %d", doubled, v*2)
+				}
+				return nil
+			},
+		),
+	)
+
+	err := ValidateMultiWithData(context.Background(), []TreeAndData{
+		{Tree: tree, Data: 21},
+		{Tree: tree, Data: 33},
+	}, ProcessingHooks{}, "check")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 }

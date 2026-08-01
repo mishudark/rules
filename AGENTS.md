@@ -81,8 +81,9 @@ Read this before touching anything in `rules.go`, `conditions.go`,
 - For reusable trees, use the data-registry pattern (`NewRule`,
   `NewTypedRule`, `ValidateWithData`) — data is bound via context at
   validation time, not closure capture.
-- `*WithTypePrepare` types store state (`loadedData`) set during Phase A
-  and read during Phase B → **never share them across goroutines**. See §6.3.
+- `*WithPrepare` types are also stateless: `Prepare` returns its data and the
+  engine injects it directly into `Validate`/`IsValid`, so **all trees are safe
+  to share across goroutines**. See §6.3.
 
 ## 2. Essential Commands
 
@@ -262,26 +263,34 @@ The `IsPure()` method is critical:
 - **Pure** (`IsPure() == true`): No side effects; engine may optimize by skipping `Prepare()`
 - **Impure** (`IsPure() == false`): Has side effects (DB calls, API calls); `Prepare()` is always called before `IsValid()`
 
-Use `NewCondition()` for pure conditions, `NewConditionSideEffect()` or `NewTypedConditionWithPrepare()` for impure ones.
+Use `NewCondition()` for pure conditions, `NewConditionSideEffect[T]()` or `NewTypedConditionWithPrepare()` for impure ones.
 
-### 6.3 State Storage and Concurrency ⚠️
-Trees made only of pure rules/conditions are safe to share across goroutines. However, rules/conditions with `Prepare()` may store state (e.g., `TypedRuleDataFunc`, `TypedConditionWithPrepare`). These are **NOT safe for concurrent use**:
+### 6.3 Reuse and Concurrency ✅
+**All rules and conditions are stateless and safe to share across goroutines.**
+`Prepare(ctx) (any, error)` retrieves the data and records it in a per-evaluation
+`PreparedStore` (created by `Validate`/`ValidateMulti`/`EvaluateMetrics*`, once
+per target in multi-target runs), keyed by the rule or condition instance. The
+rule or condition reads that data back **typed** in `Validate(ctx)` /
+`IsValid(ctx)` via the generic accessor `GetPreparedAs[T](ctx, r)` (or untyped
+via `GetPrepared`); built-in typed rules and conditions self-record during
+`Prepare` (see `TypedRuleDataFunc`, `TypedConditionWithPrepare`,
+`TypedMetricRuleDataFunc`, `ConditionSideEffect[T]`).
+Because prepared data travels in the context — never on the rule or condition
+— a tree built once can be validated concurrently against many targets:
 
 ```go
-// ✅ CORRECT: Create tree per validation
-for _, user := range users {
-    tree := buildTree() // Create inside loop
-    err := rules.ValidateWithData(ctx, tree, hooks, "validate", user)
-}
-
-// ❌ WRONG: Sharing across goroutines causes races
-tree := buildTree()
+tree := buildTree() // build once, including NewTypedRuleWithPrepare rules
 for _, user := range users {
     go func(u User) {
-        err := rules.ValidateWithData(ctx, tree, hooks, "validate", u) // RACE!
+        err := rules.ValidateWithData(ctx, tree, hooks, "validate", u) // safe
     }(user)
 }
 ```
+
+⚠️ The one caveat: do not share a single **context** (which carries the
+registry and the per-evaluation store) across goroutines — create one per
+target, e.g. via `ValidateWithData`/`ValidateMultiWithData`, which do this for
+you.
 
 ### 6.4 Execution Path Tracing
 Execution paths are recorded in an opt-in, race-free `ExecutionTrace` carried by context (rules are never mutated during evaluation):
@@ -320,15 +329,23 @@ is essential — many "obvious" optimizations actually break the design.
 1. `Evaluable.PrepareConditions(ctx)` — walks the whole tree top-down,
    calling `Condition.Prepare(ctx)` on each condition. For impure
    conditions, `Prepare()` is where data loading happens (DB, API,
-   dataloader calls). For pure conditions it is a no-op.
+   dataloader calls). For pure conditions it is a no-op. `Prepare` returns
+   the retrieved data `(any, error)`; typed conditions self-record it in
+   the evaluation's `PreparedStore` (keyed by themselves) so `IsValid`
+   can read it back typed via `GetPreparedAs[T]` (see §6.3).
 
 **Phase B — Evaluate (select + run rules):**
 2. `Evaluable.Evaluate(ctx, path)` — re-walks the tree, calling
    `Condition.IsValid(ctx)` on each condition to decide which branch(es)
-   contribute rules; returns the candidate `[]Rule` slice.
-3. `Rule.Prepare(ctx)` — per-rule side-effect prep (e.g. additional
-   fetches for that specific rule).
-4. `Rule.Validate(ctx)` — runs the actual check on prepared rules.
+   contribute rules; returns the candidate `[]Rule` slice. Impure
+   conditions read back the typed data they recorded in `Prepare`
+   via `GetPreparedAs[T]`.
+3. `Rule.Prepare(ctx) (any, error)` — per-rule side-effect prep (e.g.
+   additional fetches for that specific rule). Typed rules record the
+   retrieved data in the per-evaluation `PreparedStore` keyed by themselves.
+4. `Rule.Validate(ctx)` — runs the actual check on prepared rules, reading
+   the typed prepared data back via `GetPreparedAs[T]`.
+   Metric-carrying rules emit their outcomes here (see §6.10).
 
 Hooks can be injected at each step via `ProcessingHooks`:
 
@@ -434,8 +451,10 @@ calling `Emit(ctx, outcome)` from its `Validate`.
 - Outcomes are aggregated by **name** in `Report.Metrics` with kind defaults:
   counters sum, histograms merge bucket-wise, scores weight-average
   (`Aggregation` overrides on `Outcome`). Same name ⇒ same kind.
-- `*WithPrepare` variants store state (`loadedData`/`hasData`) like
-  `TypedRuleDataFunc` and are NOT concurrent-safe (§6.3).
+- `*WithPrepare` variants keep no state either: `Prepare` records its
+  retrieved data in the per-evaluation `PreparedStore` and `Validate` reads
+  it back typed via `GetPreparedAs[T]`, so metric rules are safe to share
+  across goroutines (§6.3).
 - `Emit` is a no-op under plain `Validate` (no collector in context), so
   metric-carrying rules behave exactly like validation rules for existing
   callers.

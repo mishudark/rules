@@ -119,7 +119,7 @@ func TestValidate_HookWithFailingCondition(t *testing.T) {
 		return false
 	})
 
-	rule := NewRule("shouldNotRun", func(ctx context.Context, data any) error {
+	rule := NewTypedRule[string]("shouldNotRun", func(ctx context.Context, _ string) error {
 		return fmt.Errorf("rule should not have been evaluated")
 	})
 
@@ -268,7 +268,7 @@ func TestContextCancellation(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		rule := NewRule("checkCancelled", func(ctx context.Context, data any) error {
+		rule := NewTypedRule[string]("checkCancelled", func(ctx context.Context, _ string) error {
 			if err := ctx.Err(); err != nil {
 				return fmt.Errorf("context cancelled: %w", err)
 			}
