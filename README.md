@@ -20,6 +20,7 @@ A flexible **rule engine** for Go that lets you build and evaluate complex valid
 - **Reusable validation** — build rule trees once, validate against different data
 - **Key metric indicators (KMIs)** — counters, histograms, and scores computed in the same tree as validation
 
+
 ---
 
 ## Quick Start
