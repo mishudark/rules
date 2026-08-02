@@ -124,7 +124,7 @@ go test -memprofile=mem.prof -bench=.
 
 | Interface | Purpose | Key Methods |
 |-----------|---------|-------------|
-| `Rule` | Single validation unit | `Prepare()`, `Validate()`, `Name()`, `SetExecutionPath()`, `GetExecutionPath()` |
+| `Rule` | Single validation unit | `Prepare()`, `Validate()`, `Name()` |
 | `Condition` | Boolean check for conditional logic | `Prepare()`, `IsValid()`, `Name()`, `IsPure()` |
 | `Evaluable` | Tree component that can be evaluated | `PrepareConditions()`, `Evaluate()` |
 
@@ -299,7 +299,7 @@ ctx, trace := rules.WithExecutionTrace(ctx)
 err := rules.Validate(ctx, tree, hooks, "name")
 path := trace.Path(rule)  // e.g. "name -> root -> cond -> leafNode -> rule1"
 ```
-Tests verify this path to ensure correct tree traversal. The legacy `SetExecutionPath`/`GetExecutionPath` methods are deprecated.
+Tests verify this path to ensure correct tree traversal.
 
 ### 6.5 Type Checking Options
 Multiple ways to check types, with different performance characteristics:

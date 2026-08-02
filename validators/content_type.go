@@ -14,10 +14,10 @@ import (
 // RuleValidContentType checks if the content type detected by http.DetectContentType
 // matches one of the allowed MIME types.
 type RuleValidContentType struct {
-	rules.RuleBase           // Embed for execution path handling
-	fieldName      string    // Name of the field being validated (e.g., "UploadedFile")
-	reader         io.Reader // Reader providing the file content
-	allowedMIMEs   []string  // List of allowed MIME types (e.g., ["image/jpeg", "application/pdf"])
+	rules.RuleBase
+	fieldName    string    // Name of the field being validated (e.g., "UploadedFile")
+	reader       io.Reader // Reader providing the file content
+	allowedMIMEs []string  // List of allowed MIME types (e.g., ["image/jpeg", "application/pdf"])
 }
 
 // Ensure RuleValidContentType implements the Rule interface.

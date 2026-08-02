@@ -71,9 +71,7 @@ type loggingRule struct {
 	log  *eventLog
 }
 
-func (r *loggingRule) Name() string                 { return r.name }
-func (r *loggingRule) SetExecutionPath(path string) {}
-func (r *loggingRule) GetExecutionPath() string     { return "" }
+func (r *loggingRule) Name() string { return r.name }
 func (r *loggingRule) Prepare(ctx context.Context) (any, error) {
 	r.log.add("prepareRule:%s", r.name)
 	return nil, nil
