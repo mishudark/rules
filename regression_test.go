@@ -29,7 +29,7 @@ func TestTypedRuleDataFunc_ValidateTypeMismatch_ReportsInType(t *testing.T) {
 
 	// Prepare succeeds: input is regInType as expected.
 	prepCtx := WithRegistry(context.Background(), NewDataRegistry(regInType{Name: "alice"}))
-	if err := rule.Prepare(prepCtx); err != nil {
+	if _, err := rule.Prepare(prepCtx); err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
 
@@ -213,7 +213,9 @@ func TestTypedRuleWithPrepare_NilPrepare_ValidateRuns(t *testing.T) {
 	)
 
 	ctx := WithRegistry(context.Background(), NewDataRegistry(regIn{Name: "alice"}))
-	if err := rule.Prepare(ctx); err != nil {
+	ctx, _ = withPreparedStore(ctx)
+	_, err := rule.Prepare(ctx)
+	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
 	if err := rule.Validate(ctx); err != nil {
@@ -338,7 +340,7 @@ func TestOrRules_PrepareAllFailFast(t *testing.T) {
 	first := &mockPrepareRule{RuleBase: RuleBase{}, name: "first"}
 	second := &mockPrepareRule{RuleBase: RuleBase{}, name: "second"}
 
-	if err := Or(first, second).Prepare(ctx); err != nil {
+	if _, err := Or(first, second).Prepare(ctx); err != nil {
 		t.Fatalf("expected Prepare to succeed, got: %v", err)
 	}
 	if first.prepares != 1 || second.prepares != 1 {
@@ -349,7 +351,7 @@ func TestOrRules_PrepareAllFailFast(t *testing.T) {
 	failing := &mockPrepareRule{RuleBase: RuleBase{}, name: "failing", err: prepareErr}
 	skipped := &mockPrepareRule{RuleBase: RuleBase{}, name: "skipped"}
 
-	err := Or(failing, skipped).Prepare(ctx)
+	_, err := Or(failing, skipped).Prepare(ctx)
 	if err == nil {
 		t.Fatal("expected Prepare to fail")
 	}
@@ -373,9 +375,9 @@ type mockPrepareRule struct {
 }
 
 func (m *mockPrepareRule) Name() string { return m.name }
-func (m *mockPrepareRule) Prepare(context.Context) error {
+func (m *mockPrepareRule) Prepare(context.Context) (any, error) {
 	m.prepares++
-	return m.err
+	return nil, m.err
 }
 func (m *mockPrepareRule) Validate(context.Context) error {
 	return nil

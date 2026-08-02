@@ -119,12 +119,18 @@ PrepareConditions → Evaluate → Prepare → Validate
 
 | Phase | What happens |
 |-------|-------------|
-| **PrepareConditions** | Conditions with side effects (impure) fetch data from DB/API. Pure conditions skip this. |
+| **PrepareConditions** | Conditions with side effects (impure) fetch data from DB/API and return it. Pure conditions skip this. |
 | **Evaluate** | Walk the tree: check conditions, collect candidate rules |
-| **Prepare** | Each candidate rule can fetch data it needs |
-| **Validate** | Run each rule's validation logic, collect errors |
+| **Prepare** | Each candidate rule fetches data it needs and returns it |
+| **Validate** | Run each rule's validation logic, reading its prepared data back typed via `GetPreparedAs[T]`, collect errors |
 
 The phases never interleave: **every** condition is prepared before any rule is prepared, and **every** rule is prepared before any validation runs. `ValidateMulti` extends this across targets — all targets' conditions are prepared before any evaluation, and all targets' rules before any validation.
+
+**Data injection:** `Prepare` returns the data it retrieved (`any`) and records it in a per-evaluation preparedStore (keyed by the rule/condition instance). `Validate` and `IsValid` read that data back typed via `GetPreparedAs[T]` (or untyped via `GetPrepared`). Rules and conditions keep no state — a single tree can be reused and shared across goroutines, and dataloaders can fan out every fetch in the Prepare sweep.
+
+```go
+data, ok := rules.GetPreparedAs[Permissions](ctx, r) // typed read
+```
 
 ### Dataloader-friendly by design
 
@@ -589,7 +595,7 @@ callers are unaffected.
 | Function | Description |
 |----------|-------------|
 | `rules.NewCondition(name, fn)` | Data-driven condition (pure) |
-| `rules.NewConditionSideEffect(name, prepare, condition)` | Condition with side effects (impure) |
+| `rules.NewConditionSideEffect[T](name, prepare, condition)` | Condition with side effects (impure), typed loaded data |
 | `rules.NewTypedCondition[T](name, fn)` | Type-safe condition (pure) |
 | `rules.NewTypedConditionWithPrepare[In, T](name, prepare, condition)` | Type-safe condition with Prepare (impure) |
 | `rules.NewConditionPure(name, fn)` | Closure-based condition (pure, legacy) |
@@ -609,11 +615,10 @@ callers are unaffected.
 
 ### Creating Custom Rules (Data Registry)
 
-**Basic rule:**
+**Basic rule (typed):**
 
 ```go
-myRule := rules.NewRule("myRule", func(ctx context.Context, data any) error {
-    user := data.(User)
+myRule := rules.NewTypedRule[User]("myRule", func(ctx context.Context, user User) error {
     if user.Disabled {
         return fmt.Errorf("user is disabled")
     }
@@ -654,20 +659,14 @@ myRule := rules.NewTypedRuleWithPrepare(
 )
 ```
 
-⚠️ **Concurrency:** `NewTypedRuleWithPrepare` stores mutable state and is not safe for concurrent use. Trees built only from pure rules/conditions (`NewRule`, `NewTypedRule`, `NewRulePure`, `NewCondition`, `FastIsA`, ...) **are safe to share across goroutines**. For stateful rules, create one tree per validation target:
+✅ **Concurrency:** rules and conditions never store prepared state — `Prepare` records its retrieved data in a per-evaluation preparedStore (keyed by the rule/condition instance), and `Validate`/`IsValid` read it back typed via `GetPreparedAs[T]`. Every tree, including ones built with `NewTypedRuleWithPrepare` and `NewTypedConditionWithPrepare`, is **safe to share across goroutines**. Build the tree once and validate many targets concurrently:
 
 ```go
-// ✅ Correct: One tree per validation
-for _, user := range users {
-    tree := buildTree()
-    err := rules.ValidateWithData(ctx, tree, hooks, "validate", user)
-}
-
-// ❌ Wrong: Sharing tree across goroutines causes race conditions
+// ✅ Correct: One tree, many targets concurrently
 tree := buildTree()
 for _, user := range users {
     go func(u User) {
-        err := rules.ValidateWithData(ctx, tree, hooks, "validate", u) // RACE!
+        err := rules.ValidateWithData(ctx, tree, hooks, "validate", u) // safe
     }(user)
 }
 ```
@@ -742,14 +741,12 @@ myCondition := rules.NewConditionPure("isAdmin", func() bool {
 var user User
 
 tree := rules.Node(
-    rules.NewConditionSideEffect(
+    rules.NewConditionSideEffect[User](
         "userActive",
-        func(ctx context.Context) error {
-            var err error
-            user, err = db.GetUser(ctx, userID)
-            return err
+        func(ctx context.Context) (User, error) {
+            return db.GetUser(ctx, userID)
         },
-        func(ctx context.Context) bool {
+        func(ctx context.Context, user User) bool {
             return user.Active
         },
     ),
@@ -895,22 +892,6 @@ Requires Go **1.26+**.
 
 6. **Know the difference: `Or` vs `AnyOf`** — `Or(rule, ...)` creates a `Rule` (use inside `Rules()`), while `AnyOf(children...)` creates an `Evaluable` (use as a tree node).
 
-7. **Share pure trees freely, even across goroutines** — Trees built from pure rules/conditions (`RuleDataFunc`, `ConditionFunc`, `RulePure`, type checkers) hold no mutable state and are safe for concurrent validation. Cache them globally.
+7. **Share trees freely, even across goroutines** — rules and conditions hold no mutable state: `Prepare` records its retrieved data in the per-evaluation preparedStore (keyed by the rule/condition instance), and `Validate`/`IsValid` read it back typed via `GetPreparedAs[T]`. A tree built once (including `NewTypedRuleWithPrepare` and `NewTypedConditionWithPrepare`) can be validated concurrently against different targets. Cache trees globally.
 
-8. **Don't share stateful trees across goroutines** — `NewTypedRuleWithPrepare` and `NewTypedConditionWithPrepare` store mutable state and are **not safe for concurrent use**. Create one tree per goroutine:
-
-    ```go
-    // ✅ Safe: tree created per loop iteration
-    for _, user := range users {
-        tree := buildTree()
-        err := rules.ValidateWithData(ctx, tree, hooks, "validate", user)
-    }
-
-    // ❌ Race condition: sharing stateful tree
-    tree := buildTree()
-    for _, user := range users {
-        go func(u User) {
-            err := rules.ValidateWithData(ctx, tree, hooks, "validate", u)
-        }(user)
-    }
-    ```
+8. **Inject, don't store** — `Prepare(ctx) (any, error)` retrieves the data and records it in the per-evaluation preparedStore (via `rules.PutPrepared`); `Validate(ctx)` / `IsValid(ctx)` read it back typed via `rules.GetPreparedAs[T](ctx, r)`. Never cache prepared data on the rule or condition: that is what made trees unsafe to share, and it defeats the dataloader fan-out (a dataloader batches every Prepare call across the whole tree and across targets in `ValidateMulti`).

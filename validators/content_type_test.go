@@ -105,7 +105,7 @@ func TestRuleValidContentType(t *testing.T) {
 
 			// Execute the validation logic
 			var err error
-			prepareErr := rule.Prepare(ctx)
+			_, prepareErr := rule.Prepare(ctx)
 			if prepareErr != nil {
 				// If Prepare fails (e.g., reader is nil, though unlikely here), capture that error
 				err = prepareErr

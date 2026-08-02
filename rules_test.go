@@ -159,9 +159,9 @@ type FailingRule struct {
 	err  error
 }
 
-func (f *FailingRule) Name() string                       { return f.name }
-func (f *FailingRule) Prepare(ctx context.Context) error  { return f.err }
-func (f *FailingRule) Validate(ctx context.Context) error { return f.err }
+func (f *FailingRule) Name() string                             { return f.name }
+func (f *FailingRule) Prepare(ctx context.Context) (any, error) { return nil, f.err }
+func (f *FailingRule) Validate(ctx context.Context) error       { return f.err }
 
 func TestChainRules(t *testing.T) {
 	t.Parallel()
@@ -177,7 +177,7 @@ func TestChainRules(t *testing.T) {
 		)
 
 		ctx := context.Background()
-		if err := cr.Prepare(ctx); err != nil {
+		if _, err := cr.Prepare(ctx); err != nil {
 			t.Errorf("unexpected prepare error: %v", err)
 		}
 		if err := cr.Validate(ctx); err != nil {
@@ -194,7 +194,7 @@ func TestChainRules(t *testing.T) {
 		)
 
 		ctx := context.Background()
-		if err := cr.Prepare(ctx); err == nil {
+		if _, err := cr.Prepare(ctx); err == nil {
 			t.Error("expected prepare error")
 		}
 	})
@@ -218,7 +218,7 @@ func TestChainRules(t *testing.T) {
 
 		cr := NewChainRules()
 		ctx := context.Background()
-		if err := cr.Prepare(ctx); err != nil {
+		if _, err := cr.Prepare(ctx); err != nil {
 			t.Errorf("unexpected prepare error: %v", err)
 		}
 		if err := cr.Validate(ctx); err != nil {
@@ -397,7 +397,7 @@ func TestNotCondition(t *testing.T) {
 			t.Errorf("expected 'Not -> nil', got %q", nc.Name())
 		}
 
-		if err := nc.Prepare(ctx); err != nil {
+		if _, err := nc.Prepare(ctx); err != nil {
 			t.Errorf("unexpected prepare error: %v", err)
 		}
 

@@ -44,12 +44,12 @@ func (r *RuleValidContentType) Name() string {
 	return fmt.Sprintf("RuleValidContentType[%s, mimes=%v]", r.fieldName, r.allowedMIMEs)
 }
 
-// Prepare checks if the reader is nil.
-func (r *RuleValidContentType) Prepare(ctx context.Context) error {
+// Prepare checks if the reader is nil. It returns no data.
+func (r *RuleValidContentType) Prepare(ctx context.Context) (any, error) {
 	if r.reader == nil {
-		return fmt.Errorf("reader for rule '%s' is nil", r.Name())
+		return nil, fmt.Errorf("reader for rule '%s' is nil", r.Name())
 	}
-	return nil
+	return nil, nil
 }
 
 // Validate performs the content type detection and check.

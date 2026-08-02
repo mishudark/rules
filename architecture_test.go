@@ -56,9 +56,9 @@ type loggingCondition struct {
 }
 
 func (c *loggingCondition) Name() string { return c.name }
-func (c *loggingCondition) Prepare(ctx context.Context) error {
+func (c *loggingCondition) Prepare(ctx context.Context) (any, error) {
 	c.log.add("prepareCondition:%s", c.name)
-	return nil
+	return nil, nil
 }
 func (c *loggingCondition) IsValid(ctx context.Context) bool {
 	c.log.add("isValid:%s", c.name)
@@ -74,9 +74,9 @@ type loggingRule struct {
 func (r *loggingRule) Name() string                 { return r.name }
 func (r *loggingRule) SetExecutionPath(path string) {}
 func (r *loggingRule) GetExecutionPath() string     { return "" }
-func (r *loggingRule) Prepare(ctx context.Context) error {
+func (r *loggingRule) Prepare(ctx context.Context) (any, error) {
 	r.log.add("prepareRule:%s", r.name)
-	return nil
+	return nil, nil
 }
 func (r *loggingRule) Validate(ctx context.Context) error {
 	r.log.add("validateRule:%s", r.name)

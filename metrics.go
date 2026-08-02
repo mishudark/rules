@@ -178,11 +178,10 @@ func (c *outcomeCollector) add(o Outcome) {
 //
 // Example:
 //
-//	rule := rules.NewRule("itemsInOrder", func(ctx context.Context, data any) error {
-//	    order := data.(Order)
-//	    rules.Emit(ctx, rules.CounterValue(float64(len(order.Items))))
-//	    return nil
-//	})
+//	rule := rules.NewTypedMetricRule[Order]("itemsInOrder", rules.KindCounter, "items",
+//	    func(ctx context.Context, order Order) (rules.Outcome, error) {
+//	        return rules.CounterValue(float64(len(order.Items))), nil
+//	    })
 func Emit(ctx context.Context, o Outcome) {
 	if collector := outcomeCollectorFromContext(ctx); collector != nil {
 		collector.add(o)
@@ -216,7 +215,7 @@ var _ Rule = (*MetricRulePure)(nil)
 func (r *MetricRulePure) Name() string { return r.name }
 
 // Prepare is a no-op for pure rules.
-func (r *MetricRulePure) Prepare(context.Context) error { return nil }
+func (r *MetricRulePure) Prepare(context.Context) (any, error) { return nil, nil }
 
 // Validate executes the wrapped function, records the outcome, and returns
 // the validation error.
@@ -246,33 +245,35 @@ func NewMetricRulePure(name string, kind Kind, field string, fn func() (Outcome,
 	return &MetricRulePure{name: name, kind: kind, field: field, fn: fn}
 }
 
-// MetricRuleDataFunc is a rule that reads data from the context registry at
-// validation time, validates it, and carries a metric outcome.
-type MetricRuleDataFunc struct {
+// TypedMetricRule is a pure metric-carrying rule that reads data of type T
+// from the data registry at validation time. Used by NewTypedMetricRule.
+type TypedMetricRule[T any] struct {
 	RuleBase
 	name  string
 	kind  Kind
 	field string
-	fn    func(ctx context.Context, data any) (Outcome, error)
+	fn    func(ctx context.Context, data T) (Outcome, error)
 }
 
-var _ Rule = (*MetricRuleDataFunc)(nil)
+var _ Rule = (*TypedMetricRule[any])(nil)
 
 // Name returns the rule name.
-func (r *MetricRuleDataFunc) Name() string { return r.name }
+func (r *TypedMetricRule[T]) Name() string { return r.name }
 
 // Prepare is a no-op for pure rules.
-func (r *MetricRuleDataFunc) Prepare(context.Context) error { return nil }
+func (r *TypedMetricRule[T]) Prepare(context.Context) (any, error) { return nil, nil }
 
-// Validate retrieves the data from context, runs the wrapped function,
-// records the outcome, and returns the validation error.
-func (r *MetricRuleDataFunc) Validate(ctx context.Context) error {
-	data, ok := Get(ctx)
+// Validate reads the typed data from the data registry via GetAs[T], runs the
+// wrapped function, records the outcome, and returns the validation error.
+func (r *TypedMetricRule[T]) Validate(ctx context.Context) error {
+	data, ok := GetAs[T](ctx)
 	if !ok {
+		var zero T
+		raw, _ := Get(ctx)
 		return Error{
 			Field: r.name,
-			Err:   "validation data not found in context",
-			Code:  "DATA_NOT_FOUND",
+			Err:   fmt.Sprintf("expected data of type %T, got %T", zero, raw),
+			Code:  "TYPE_MISMATCH",
 		}
 	}
 	outcome, err := r.fn(ctx, data)
@@ -280,28 +281,9 @@ func (r *MetricRuleDataFunc) Validate(ctx context.Context) error {
 	return err
 }
 
-// NewMetricRule creates a rule that receives data from the context registry,
-// validates it, and carries a metric outcome. This is the primary way to
-// create reusable metric-carrying rules that work with the data registry
-// pattern.
-//
-// Example:
-//
-//	rule := rules.NewMetricRule("orderTotal", rules.KindCounter, "revenue",
-//	    func(ctx context.Context, data any) (rules.Outcome, error) {
-//	        order := data.(Order)
-//	        if order.Total <= 0 {
-//	            return rules.CounterValue(0), fmt.Errorf("invalid order total")
-//	        }
-//	        return rules.CounterValue(order.Total), nil
-//	    })
-func NewMetricRule(name string, kind Kind, field string, fn func(ctx context.Context, data any) (Outcome, error)) Rule {
-	return &MetricRuleDataFunc{name: name, kind: kind, field: field, fn: fn}
-}
-
-// NewTypedMetricRule creates a type-safe rule that automatically casts data
-// to type T, validates it, and carries a metric outcome. Returns an error if
-// the data cannot be cast to T.
+// NewTypedMetricRule creates a type-safe rule that reads data of type T from
+// the data registry, validates it, and carries a metric outcome. Returns a
+// TYPE_MISMATCH error if the registered data is not of type T.
 //
 // Example:
 //
@@ -310,31 +292,16 @@ func NewMetricRule(name string, kind Kind, field string, fn func(ctx context.Con
 //	        return rules.ScoreValue(u.Engagement, 1), nil
 //	    })
 func NewTypedMetricRule[T any](name string, kind Kind, field string, fn func(ctx context.Context, data T) (Outcome, error)) Rule {
-	return &MetricRuleDataFunc{
-		name:  name,
-		kind:  kind,
-		field: field,
-		fn: func(ctx context.Context, data any) (Outcome, error) {
-			typed, ok := data.(T)
-			if !ok {
-				var zero T
-				return Outcome{}, Error{
-					Field: name,
-					Err:   fmt.Sprintf("expected data of type %T, got %T", zero, data),
-					Code:  "TYPE_MISMATCH",
-				}
-			}
-			return fn(ctx, typed)
-		},
-	}
+	return &TypedMetricRule[T]{name: name, kind: kind, field: field, fn: fn}
 }
 
 // TypedMetricRuleDataFunc is a rule with Prepare support, type-safe data
-// access, and a carried metric outcome. This allows rules to have side
-// effects (e.g., fetching data) before validation.
-//
-// ⚠️ WARNING: This type stores mutable state (loadedData, hasData) set during
-// Prepare() and read during Validate(). It is NOT safe for concurrent use.
+// access, and a carried metric outcome. In is the input type read from the
+// data registry; T is the loaded data type retrieved during Prepare. The rule
+// keeps no state: Prepare records its retrieved data in the per-evaluation
+// preparedStore keyed by this rule, and Validate reads it back typed via
+// GetPreparedAs[T]. A single tree built with it can be reused and shared
+// across goroutines.
 type TypedMetricRuleDataFunc[In any, T any] struct {
 	RuleBase
 	name    string
@@ -342,9 +309,6 @@ type TypedMetricRuleDataFunc[In any, T any] struct {
 	field   string
 	prepare func(ctx context.Context, input In) (T, error)
 	fn      func(ctx context.Context, input In, data T) (Outcome, error)
-
-	loadedData T
-	hasData    bool
 }
 
 var _ Rule = (*TypedMetricRuleDataFunc[any, any])(nil)
@@ -352,73 +316,58 @@ var _ Rule = (*TypedMetricRuleDataFunc[any, any])(nil)
 // Name returns the rule name.
 func (r *TypedMetricRuleDataFunc[In, T]) Name() string { return r.name }
 
-// Prepare executes the prepare function with typed data, mirroring
-// TypedRuleDataFunc. When no prepare function is provided, Validate runs with
-// the zero value of T.
-func (r *TypedMetricRuleDataFunc[In, T]) Prepare(ctx context.Context) error {
-	data, ok := Get(ctx)
-	if !ok {
-		return Error{
-			Field: r.name,
-			Err:   "validation input not found in context",
-			Code:  "INPUT_NOT_FOUND",
-		}
-	}
-	typed, ok := data.(In)
+// Prepare reads the typed input from the data registry, runs the prepare
+// function, and records the retrieved data in the per-evaluation preparedStore
+// keyed by this rule. The rule keeps no state.
+func (r *TypedMetricRuleDataFunc[In, T]) Prepare(ctx context.Context) (any, error) {
+	input, ok := GetAs[In](ctx)
 	if !ok {
 		var zero In
-		return Error{
+		return nil, Error{
 			Field: r.name,
-			Err:   fmt.Sprintf("expected data of type %T, got %T", zero, data),
+			Err:   fmt.Sprintf("expected input of type %T, got different type", zero),
 			Code:  "TYPE_MISMATCH",
 		}
 	}
 
 	if r.prepare == nil {
-		r.hasData = true
-		return nil
+		var zero T
+		recordPrepared(ctx, r, zero)
+		return zero, nil
 	}
 
-	prepared, err := r.prepare(ctx, typed)
+	data, err := r.prepare(ctx, input)
 	if err != nil {
-		return err
+		return nil, err
 	}
-
-	r.hasData = true
-	r.loadedData = prepared
-	return nil
+	recordPrepared(ctx, r, data)
+	return data, nil
 }
 
-// Validate runs the validation function with typed data, records the outcome,
-// and returns the validation error.
+// Validate reads the typed input from the data registry and the prepared data
+// (of type T) recorded by Prepare, runs the validation function, records the
+// outcome, and returns the validation error.
 func (r *TypedMetricRuleDataFunc[In, T]) Validate(ctx context.Context) error {
-	input, ok := Get(ctx)
-	if !ok {
-		return Error{
-			Field: r.name,
-			Err:   "validation input not found in context",
-			Code:  "INPUT_NOT_FOUND",
-		}
-	}
-	typedInput, ok := input.(In)
+	input, ok := GetAs[In](ctx)
 	if !ok {
 		var zero In
 		return Error{
 			Field: r.name,
-			Err:   fmt.Sprintf("expected input of type %T, got %T", zero, input),
+			Err:   fmt.Sprintf("expected input of type %T, got different type", zero),
 			Code:  "TYPE_MISMATCH",
 		}
 	}
 
-	if !r.hasData {
+	loaded, ok := GetPreparedAs[T](ctx, r)
+	if !ok {
 		return Error{
 			Field: r.name,
-			Err:   "validation data from prepared not available",
+			Err:   "metric data from prepare not available",
 			Code:  "DATA_NOT_PREPARED",
 		}
 	}
 
-	outcome, err := r.fn(ctx, typedInput, r.loadedData)
+	outcome, err := r.fn(ctx, input, loaded)
 	Emit(ctx, fillOutcome(r.name, r.field, r.kind, outcome))
 	return err
 }
@@ -429,8 +378,9 @@ func (r *TypedMetricRuleDataFunc[In, T]) Validate(ctx context.Context) error {
 // database), and it participates in the same dataloader batching as rules and
 // conditions.
 //
-// ⚠️ IMPORTANT: This rule stores mutable state (loadedData, hasData) and is
-// NOT safe for concurrent use. Create one tree per target when sharing across
+// Prepare records the retrieved data in the per-evaluation preparedStore
+// keyed by this rule; Validate reads it back typed via GetPreparedAs[T]. The
+// rule keeps no state, so a tree built with it can be reused and shared across
 // goroutines.
 //
 // Example:

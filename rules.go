@@ -24,12 +24,23 @@ func (e Error) Error() string {
 // Condition represents a function that evaluates to true or false, typically
 // used within conditional nodes (like ConditionNode) to determine whether
 // associated rules or child nodes should be processed.
+//
+// Prepare returns the retrieved data (any) and an error; the implementation
+// records that data itself in the per-evaluation preparedStore (see
+// [PutPrepared]) so it can be read back typed in IsValid via [GetPreparedAs].
+// Because the prepared data travels in the context — never on the condition —
+// a single tree can be reused and shared across goroutines.
 type Condition interface {
-	// Prepare is executed before the main validation logic. It can be used to retrieve information.
-	Prepare(ctx context.Context) error
+	// Prepare is executed before the main validation logic. It can be used to
+	// retrieve information. It returns the retrieved data (any) and an error;
+	// for typed conditions the same data is recorded in the preparedStore so
+	// IsValid can read it back via [GetPreparedAs].
+	Prepare(ctx context.Context) (any, error)
 	// Name is a method to retrieve the name of the condition for debugging or logging.
 	Name() string
-	// Evaluate returns true if the condition is met, otherwise false.
+	// Evaluate returns true if the condition is met, otherwise false. Typed
+	// conditions read back the data Prepare recorded via [GetPreparedAs]; pure
+	// conditions may ignore it.
 	IsValid(ctx context.Context) bool
 	// IsPure returns true if the condition is pure (no side effects).
 	IsPure() bool
@@ -37,16 +48,24 @@ type Condition interface {
 
 // Rule represents a single unit of validation logic. It includes a Prepare
 // step (potentially for setup or pre-checks) and a Validate step that performs
-// the actual validation check. Both methods return an error if validation fails
-// at that stage, or nil otherwise.
+// the actual validation check.
+//
+// Prepare returns the retrieved data (any) plus an error; the implementation
+// records that data in the per-evaluation preparedStore (see [PutPrepared]) so
+// it can be read back typed in Validate via [GetPreparedAs]. Rules never store
+// prepared state on themselves, so a single tree can be reused and shared
+// across goroutines.
 type Rule interface {
 	// Name returns the name of the rule for identification.
 	Name() string
 	// Prepare allows for initialization or pre-checks before the main validation.
-	// Returns an error if preparation fails, otherwise nil.
-	Prepare(ctx context.Context) error
-	// Validate performs the core validation logic.
-	// Returns an error if validation fails, otherwise nil.
+	// It returns the retrieved data and an error if preparation fails. Typed
+	// rules record the same data in the preparedStore so Validate can read it
+	// back via [GetPreparedAs].
+	Prepare(ctx context.Context) (any, error)
+	// Validate performs the core validation logic. Typed rules read back the
+	// data Prepare recorded via [GetPreparedAs] (typed); pure rules may ignore
+	// it. Returns an error if validation fails, otherwise nil.
 	Validate(ctx context.Context) error
 	// SetExecutionPath allows setting a path for execution context.
 	//
@@ -134,12 +153,12 @@ func (n *ConditionNode) PrepareConditions(ctx context.Context) error {
 	}
 
 	// If the condition is pure, evaluate it immediately and short-circuit
-	// the subtree when it cannot pass.
+	// the subtree when it cannot pass. Pure conditions ignore prepared data.
 	if n.Condition.IsPure() && !n.Condition.IsValid(ctx) {
 		return nil
 	}
 
-	if err := n.Condition.Prepare(ctx); err != nil {
+	if _, err := n.Condition.Prepare(ctx); err != nil {
 		return err
 	}
 
@@ -332,9 +351,9 @@ func (n *NotCondition) Name() string {
 	return fmt.Sprintf("Not -> %s", n.condition.Name())
 }
 
-func (n *NotCondition) Prepare(ctx context.Context) error {
+func (n *NotCondition) Prepare(ctx context.Context) (any, error) {
 	if n.condition == nil {
-		return nil
+		return nil, nil
 	}
 	return n.condition.Prepare(ctx)
 }
@@ -393,6 +412,7 @@ func (n *ConditionEither) PrepareConditions(ctx context.Context) error {
 	}
 
 	// Pure: evaluate immediately and prepare only the matching branch.
+	// Pure conditions ignore prepared data.
 	if n.Condition.IsPure() {
 		var sideToPrepare []Evaluable
 		if n.Condition.IsValid(ctx) {
@@ -410,8 +430,9 @@ func (n *ConditionEither) PrepareConditions(ctx context.Context) error {
 	}
 
 	// Impure: prepare the condition, then fan out Prepare across BOTH
-	// branches so the dataloader can batch all fetches together.
-	if err := n.Condition.Prepare(ctx); err != nil {
+	// branches so the dataloader can batch all fetches together. The typed
+	// condition self-records its prepared data, so the store is populated here.
+	if _, err := n.Condition.Prepare(ctx); err != nil {
 		return err
 	}
 
@@ -492,8 +513,8 @@ func (n *NopRule) Name() string {
 	return "nopRule"
 }
 
-func (n *NopRule) Prepare(ctx context.Context) error {
-	return nil
+func (n *NopRule) Prepare(ctx context.Context) (any, error) {
+	return nil, nil
 }
 
 func (n *NopRule) Validate(ctx context.Context) error {
@@ -521,15 +542,15 @@ func (c *ChainRules) Name() string {
 // Prepare implements the Rule interface for ChainRules. It calls Prepare() on each
 // Rule in the sequence. If any child Rule's Prepare() returns an error,
 // this method stops and returns that error immediately. If all children's
-// Prepare() methods succeed, it returns nil.
-func (c *ChainRules) Prepare(ctx context.Context) error {
+// Prepare() methods succeed, it returns nil. Each child prepares and records
+// its own data (typed rules self-record into the preparedStore).
+func (c *ChainRules) Prepare(ctx context.Context) (any, error) {
 	for _, rule := range c.Rules {
-		err := rule.Prepare(ctx)
-		if err != nil {
-			return err
+		if _, err := rule.Prepare(ctx); err != nil {
+			return nil, err
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // Validate implements the Rule interface for ChainRules. It calls Validate() on each
@@ -538,8 +559,7 @@ func (c *ChainRules) Prepare(ctx context.Context) error {
 // Validate() methods succeed, it returns nil.
 func (c *ChainRules) Validate(ctx context.Context) error {
 	for _, rule := range c.Rules {
-		err := rule.Validate(ctx)
-		if err != nil {
+		if err := rule.Validate(ctx); err != nil {
 			return err
 		}
 	}
@@ -579,9 +599,9 @@ type RulePure struct {
 var _ Rule = (*RulePure)(nil) // Ensure RulePure implements the Rule interface.
 
 // Prepare implements the Rule interface for RulePure. It performs no action
-// and always returns nil.
-func (r *RulePure) Prepare(ctx context.Context) error {
-	return nil // Simple rules typically don't require preparation.
+// and always returns nil data and a nil error.
+func (r *RulePure) Prepare(ctx context.Context) (any, error) {
+	return nil, nil // Simple rules typically don't require preparation.
 }
 
 // Name returns the name of the RulePure. This is useful for debugging.
@@ -629,16 +649,17 @@ func (o *OrRules) Name() string {
 
 // Prepare implements the Rule interface for OrRules. It calls Prepare() on
 // every child Rule: preparation is setup work, so all rules must be prepared
-// regardless of the OR semantics used by Validate. If any child Rule's
+// regardless of the OR semantics used by Validate. Each child records its own
+// retrieved data into the evaluation's preparedStore. If any child Rule's
 // Prepare() returns an error, it stops and returns that error immediately.
-func (o *OrRules) Prepare(ctx context.Context) error {
+func (o *OrRules) Prepare(ctx context.Context) (any, error) {
 	for _, rule := range o.Rules {
-		if err := rule.Prepare(ctx); err != nil {
-			return err
+		if _, err := rule.Prepare(ctx); err != nil {
+			return nil, err
 		}
 	}
 
-	return nil
+	return nil, nil
 }
 
 // Validate implements the Rule interface for OrRules. It calls Validate() on each
@@ -677,9 +698,9 @@ type ConditionPure struct {
 
 var _ Condition = (*ConditionPure)(nil) // Ensure ConditionPure implements the Condition interface.
 
-// Prepare is a no-op for ConditionPure, it always returns nil.
-func (c *ConditionPure) Prepare(context.Context) error {
-	return nil
+// Prepare is a no-op for ConditionPure, it always returns nil data and nil error.
+func (c *ConditionPure) Prepare(context.Context) (any, error) {
+	return nil, nil
 }
 
 func (c *ConditionPure) Name() string {
@@ -703,97 +724,130 @@ func NewConditionPure(name string, condition func() bool) Condition {
 }
 
 // ConditionSideEffect has side effects (e.g., fetching data) and uses Prepare.
-type ConditionSideEffect struct {
+// The loaded data type T is a type parameter: the prepare function returns a
+// value of type T and the condition function receives it typed — no `any`
+// conversion at the call site.
+type ConditionSideEffect[T any] struct {
 	name      string
-	prepare   func(ctx context.Context) error
-	condition func(ctx context.Context) bool
+	prepare   func(ctx context.Context) (T, error)
+	condition func(ctx context.Context, data T) bool
 }
 
-var _ Condition = (*ConditionSideEffect)(nil) // Ensure ConditionSideEffect implements the Condition interface.
+var _ Condition = (*ConditionSideEffect[any])(nil) // Ensure ConditionSideEffect implements the Condition interface.
 
-func (c *ConditionSideEffect) Prepare(ctx context.Context) error {
-	if c.prepare != nil {
-		return c.prepare(ctx)
+// Prepare runs the side-effecting prepare function, records the retrieved data
+// in the per-evaluation preparedStore keyed by this condition, and returns it
+// (as any) to satisfy the Rule interface. The data is read back typed in
+// IsValid via GetPreparedAs[T].
+func (c *ConditionSideEffect[T]) Prepare(ctx context.Context) (any, error) {
+	if c.prepare == nil {
+		return nil, nil
 	}
-	return nil
+	data, err := c.prepare(ctx)
+	if err != nil {
+		return nil, err
+	}
+	recordPrepared(ctx, c, data)
+	return data, nil
 }
 
-func (c *ConditionSideEffect) Name() string {
+func (c *ConditionSideEffect[T]) Name() string {
 	return c.name
 }
 
-func (c *ConditionSideEffect) IsValid(ctx context.Context) bool {
-	return c.condition(ctx)
+// IsValid evaluates the condition using the typed data that Prepare retrieved
+// (read back via GetPreparedAs[T], keyed by this condition instance).
+func (c *ConditionSideEffect[T]) IsValid(ctx context.Context) bool {
+	data, ok := GetPreparedAs[T](ctx, c)
+	if !ok {
+		return false
+	}
+	return c.condition(ctx, data)
 }
 
-func (c *ConditionSideEffect) IsPure() bool {
+func (c *ConditionSideEffect[T]) IsPure() bool {
 	return false
 }
 
-// NewConditionSideEffect creates a condition with side effects (e.g., fetching data).
-// The prepare function is called before IsValid.
-func NewConditionSideEffect(name string, prepare func(ctx context.Context) error, condition func(ctx context.Context) bool) Condition {
-	return &ConditionSideEffect{
+// NewConditionSideEffect creates a condition with side effects (e.g., fetching
+// data). T is the type of the data loaded during Prepare. The prepare function
+// returns a value of type T; the condition function receives it typed, so
+// neither side touches `any`.
+//
+// Prepare returns the retrieved data and records it in the per-evaluation
+// preparedStore keyed by this condition; IsValid reads it back typed. The
+// condition keeps no state, so a tree built with it can be reused and shared
+// across goroutines.
+//
+// Example:
+//
+//	cond := rules.NewConditionSideEffect[User](
+//	    "userActive",
+//	    func(ctx context.Context) (User, error) {
+//	        return db.GetUser(ctx, userID)
+//	    },
+//	    func(ctx context.Context, user User) bool {
+//	        return user.Active
+//	    },
+//	)
+func NewConditionSideEffect[T any](
+	name string,
+	prepare func(ctx context.Context) (T, error),
+	condition func(ctx context.Context, data T) bool,
+) Condition {
+	if prepare == nil {
+		prepare = func(context.Context) (T, error) { var zero T; return zero, nil }
+	}
+	if condition == nil {
+		condition = func(context.Context, T) bool { return false }
+	}
+	return &ConditionSideEffect[T]{
 		name:      name,
 		prepare:   prepare,
 		condition: condition,
 	}
 }
 
-// RuleDataFunc is a rule that receives data from context as any (interface{}).
-// This enables reusable rule trees where data is bound at validation time, not construction time.
-type RuleDataFunc struct {
+// TypedRulePure is a pure rule that reads its input data of type T from the
+// data registry at validation time. Prepare is a no-op. Used by NewTypedRule.
+type TypedRulePure[T any] struct {
 	RuleBase
 	name string
-	fn   func(ctx context.Context, data any) error
+	fn   func(ctx context.Context, data T) error
 }
 
-var _ Rule = (*RuleDataFunc)(nil)
+var _ Rule = (*TypedRulePure[any])(nil)
 
 // Name returns the rule name.
-func (r *RuleDataFunc) Name() string {
-	return r.name
-}
+func (r *TypedRulePure[T]) Name() string { return r.name }
 
 // Prepare implements Rule interface. It's a no-op for pure rules.
-func (r *RuleDataFunc) Prepare(ctx context.Context) error {
-	return nil
-}
+func (r *TypedRulePure[T]) Prepare(context.Context) (any, error) { return nil, nil }
 
-// Validate retrieves data from context and calls the wrapped function.
-func (r *RuleDataFunc) Validate(ctx context.Context) error {
-	data, ok := Get(ctx)
+// Validate reads the typed data from the context registry via GetAs[T] and
+// calls the wrapped function. Returns a TYPE_MISMATCH error when the registered
+// data is not of type T.
+func (r *TypedRulePure[T]) Validate(ctx context.Context) error {
+	data, ok := GetAs[T](ctx)
 	if !ok {
+		var zero T
+		raw, _ := Get(ctx)
 		return Error{
 			Field: r.name,
-			Err:   "validation data not found in context",
-			Code:  "DATA_NOT_FOUND",
+			Err:   fmt.Sprintf("expected data of type %T, got %T", zero, raw),
+			Code:  "TYPE_MISMATCH",
 		}
 	}
 	return r.fn(ctx, data)
 }
 
-// NewRule creates a rule that receives data from context.
-// This is the primary way to create reusable rules that work with the data registry pattern.
+// NewTypedRule creates a type-safe rule that reads data of type T from the
+// data registry at validation time. Returns a TYPE_MISMATCH error if the
+// registered data is not of type T.
 //
-// Example:
-//
-//	rule := rules.NewRule("checkEmail", func(ctx context.Context, data any) error {
-//	    user := data.(User)
-//	    if !strings.Contains(user.Email, "@") {
-//	        return fmt.Errorf("invalid email")
-//	    }
-//	    return nil
-//	})
-func NewRule(name string, fn func(ctx context.Context, data any) error) Rule {
-	return &RuleDataFunc{
-		name: name,
-		fn:   fn,
-	}
-}
-
-// NewTypedRule creates a type-safe rule that automatically casts data to type T.
-// Returns an error if the data cannot be cast to T.
+// This is the primary way to create reusable validation rules that work with
+// the data registry pattern; the closure receives data of type T directly,
+// never `any`.
 //
 // Example:
 //
@@ -804,25 +858,12 @@ func NewRule(name string, fn func(ctx context.Context, data any) error) Rule {
 //	    return nil
 //	})
 func NewTypedRule[T any](name string, fn func(ctx context.Context, data T) error) Rule {
-	return &RuleDataFunc{
-		name: name,
-		fn: func(ctx context.Context, data any) error {
-			typed, ok := data.(T)
-			if !ok {
-				var zero T
-				return Error{
-					Field: name,
-					Err:   fmt.Sprintf("expected data of type %T, got %T", zero, data),
-					Code:  "TYPE_MISMATCH",
-				}
-			}
-			return fn(ctx, typed)
-		},
-	}
+	return &TypedRulePure[T]{name: name, fn: fn}
 }
 
-// NewTypedCondition creates a type-safe condition that automatically casts data to type T.
-// Returns false if the data cannot be cast to T.
+// NewTypedCondition creates a type-safe condition that reads data of type T
+// from the data registry and returns false when the registered data is not of
+// type T. It is intended for pure conditions (no side effects).
 //
 // Example:
 //
@@ -833,32 +874,27 @@ func NewTypedCondition[T any](name string, fn func(ctx context.Context, data T) 
 	return &ConditionFunc{
 		name: name,
 		predicate: func(ctx context.Context) bool {
-			data, ok := Get(ctx)
+			data, ok := GetAs[T](ctx)
 			if !ok {
 				return false
 			}
-			typed, ok := data.(T)
-			if !ok {
-				return false
-			}
-			return fn(ctx, typed)
+			return fn(ctx, data)
 		},
 		pure: true,
 	}
 }
 
 // TypedRuleDataFunc is a rule with Prepare support and type-safe data access.
-// This allows rules to have side effects (e.g., fetching data) before validation.
-//
-// ⚠️ WARNING: This type stores mutable state (loadedData, hasData) set during Prepare() and read during Validate().
-// It is NOT safe for concurrent use. See NewTypedRuleWithPrepare for details.
+// In is the input type read from the data registry; T is the loaded data type
+// retrieved during Prepare. The rule keeps no state: Prepare records its
+// retrieved data in the per-evaluation preparedStore keyed by this rule, and
+// Validate reads it back typed via GetPreparedAs[T]. A single tree built with
+// it can be reused and shared across goroutines.
 type TypedRuleDataFunc[In any, T any] struct {
 	RuleBase
-	name       string
-	prepare    func(ctx context.Context, input In) (T, error)
-	fn         func(ctx context.Context, input In, data T) error
-	loadedData T
-	hasData    bool
+	name    string
+	prepare func(ctx context.Context, input In) (T, error)
+	fn      func(ctx context.Context, input In, data T) error
 }
 
 var _ Rule = (*TypedRuleDataFunc[any, any])(nil)
@@ -868,94 +904,71 @@ func (r *TypedRuleDataFunc[In, T]) Name() string {
 	return r.name
 }
 
-// Prepare executes the prepare function with typed data.
-func (r *TypedRuleDataFunc[In, T]) Prepare(ctx context.Context) error {
-	data, ok := Get(ctx)
-	if !ok {
-		return Error{
-			Field: r.name,
-			Err:   "validation input not found in context",
-			Code:  "INPUT_NOT_FOUND",
-		}
-	}
-	typed, ok := data.(In)
+// Prepare reads the typed input from the data registry, runs the prepare
+// function, and records the retrieved data in the per-evaluation preparedStore
+// keyed by this rule. The rule keeps no state.
+func (r *TypedRuleDataFunc[In, T]) Prepare(ctx context.Context) (any, error) {
+	input, ok := GetAs[In](ctx)
 	if !ok {
 		var zero In
-		return Error{
+		return nil, Error{
 			Field: r.name,
-			Err:   fmt.Sprintf("expected data of type %T, got %T", zero, data),
+			Err:   fmt.Sprintf("expected input of type %T, got different type", zero),
 			Code:  "TYPE_MISMATCH",
 		}
 	}
 
 	if r.prepare == nil {
-		// No prepare step: mark as prepared with the zero value of T so
-		// Validate can run.
-		r.hasData = true
-		return nil
+		// No prepare step: record the zero value of T so Validate can still
+		// read it back with GetPreparedAs[T].
+		var zero T
+		recordPrepared(ctx, r, zero)
+		return zero, nil
 	}
 
-	prepared, err := r.prepare(ctx, typed)
+	data, err := r.prepare(ctx, input)
 	if err != nil {
-		return err
+		return nil, err
 	}
-
-	r.hasData = true
-	r.loadedData = prepared
-	return nil
+	recordPrepared(ctx, r, data)
+	return data, nil
 }
 
-// Validate executes the validation function with typed data.
+// Validate reads the typed input from the data registry and the prepared data
+// (of type T) recorded by Prepare, and runs the validation function. Both
+// reads are typed — no `any` conversion at the rule level.
 func (r *TypedRuleDataFunc[In, T]) Validate(ctx context.Context) error {
-	input, ok := Get(ctx)
-	if !ok {
-		return Error{
-			Field: r.name,
-			Err:   "validation input not found in context",
-			Code:  "INPUT_NOT_FOUND",
-		}
-	}
-	typedInput, ok := input.(In)
+	input, ok := GetAs[In](ctx)
 	if !ok {
 		var zero In
 		return Error{
 			Field: r.name,
-			Err:   fmt.Sprintf("expected input of type %T, got %T", zero, input),
+			Err:   fmt.Sprintf("expected input of type %T, got different type", zero),
 			Code:  "TYPE_MISMATCH",
 		}
 	}
 
-	if !r.hasData {
+	loaded, ok := GetPreparedAs[T](ctx, r)
+	if !ok {
 		return Error{
 			Field: r.name,
-			Err:   "validation data from prepared not available",
+			Err:   "validation data from prepare not available",
 			Code:  "DATA_NOT_PREPARED",
 		}
 	}
 
-	return r.fn(ctx, typedInput, r.loadedData)
+	return r.fn(ctx, input, loaded)
 }
 
 // NewTypedRuleWithPrepare creates a type-safe rule with Prepare support.
 // This is useful when you need to fetch additional data or perform side effects
 // before validation (e.g., checking a database, calling an API).
 //
-// ⚠️ IMPORTANT: This rule stores mutable state (loadedData, hasData) and is NOT safe for
-// concurrent use. When validating multiple items concurrently, create one tree per target:
-//
-//	// ✅ Correct: One tree per target
-//	for _, user := range users {
-//	    tree := buildTree() // Create inside loop
-//	    err := rules.ValidateWithData(ctx, tree, hooks, "validate", user)
-//	}
-//
-//	// ❌ Wrong: Sharing tree across goroutines causes race conditions
-//	tree := buildTree()
-//	for _, user := range users {
-//	    go func(u User) {
-//	        err := rules.ValidateWithData(ctx, tree, hooks, "validate", u) // RACE!
-//	    }(user)
-//	}
+// In is the input type read from the data registry; T is the loaded data type.
+// Prepare returns the retrieved data and records it in the per-evaluation
+// preparedStore keyed by this rule; the validate function reads it back typed
+// (via GetPreparedAs[T]) as its third argument. The rule keeps no state, so a
+// tree built with it can be reused and shared across goroutines.
 //
 // Example:
 //
@@ -964,8 +977,11 @@ func (r *TypedRuleDataFunc[In, T]) Validate(ctx context.Context) error {
 //	    func(ctx context.Context, user User) (Permissions, error) {
 //	        return db.CheckEmailExists(ctx, user.Email)
 //	    },
-//	    func(ctx context.Context, user User, perms Permissions) bool {
-//	        return !perms.Exists
+//	    func(ctx context.Context, user User, perms Permissions) error {
+//	        if perms.Exists {
+//	            return fmt.Errorf("email already in use")
+//	        }
+//	        return nil
 //	    },
 //	)
 func NewTypedRuleWithPrepare[In any, T any](
