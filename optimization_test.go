@@ -39,7 +39,7 @@ func (m *MockEvaluable) PrepareConditions(ctx context.Context) error {
 	return nil
 }
 
-func (m *MockEvaluable) Evaluate(ctx context.Context, executionPath string) (bool, []Rule) {
+func (m *MockEvaluable) Evaluate(ctx context.Context) (bool, []Rule) {
 	return true, nil
 }
 
@@ -151,7 +151,7 @@ func TestExistingFunctionality(t *testing.T) {
 		t.Fatalf("PrepareConditions failed: %v", err)
 	}
 
-	ok, _ := node.Evaluate(ctx, "root")
+	ok, _ := node.Evaluate(ctx)
 	if !ok {
 		t.Error("Expected evaluation to succeed")
 	}

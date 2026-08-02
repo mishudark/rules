@@ -9,6 +9,11 @@ type registryKey struct{}
 
 // DataRegistry holds validation data as any (interface{}).
 // It enables tree reuse by separating rule definitions from data binding.
+//
+// A registry holds a single payload. Rules that need more than one input
+// value should load the additional data in their Prepare step (see
+// NewTypedRuleWithPrepare and NewTypedConditionWithPrepare) or compose the
+// payload into one struct.
 type DataRegistry struct {
 	data any
 }

@@ -26,6 +26,9 @@ func (c *ConditionFunc) Name() string {
 
 // IsValid evaluates the condition using the predicate.
 func (c *ConditionFunc) IsValid(ctx context.Context) bool {
+	if c.predicate == nil {
+		return false
+	}
 	return c.predicate(ctx)
 }
 
@@ -202,6 +205,9 @@ func FastTypeSwitch(name string, check func(data any) bool) Condition {
 	return &ConditionFunc{
 		name: name,
 		predicate: func(ctx context.Context) bool {
+			if check == nil {
+				return false
+			}
 			data, ok := Get(ctx)
 			if !ok {
 				return false
@@ -378,9 +384,18 @@ func (c *TypedConditionWithPrepare[In, T]) Prepare(ctx context.Context) (any, er
 		return nil, Error{
 			Field: c.name,
 			Err:   fmt.Sprintf("expected input of type %T, got different type", zero),
-			Code:  "TYPE_MISMATCH",
+			Code:  ErrorCodeTypeMismatch,
 		}
 	}
+
+	if c.prepare == nil {
+		// No prepare step: record the zero value of T so IsValid can still
+		// read it back with GetPreparedAs[T].
+		var zero T
+		recordPrepared(ctx, c, zero)
+		return zero, nil
+	}
+
 	data, err := c.prepare(ctx, input)
 	if err != nil {
 		return nil, err
@@ -404,6 +419,10 @@ func (c *TypedConditionWithPrepare[In, T]) IsValid(ctx context.Context) bool {
 
 	loaded, ok := GetPreparedAs[T](ctx, c)
 	if !ok {
+		return false
+	}
+
+	if c.condition == nil {
 		return false
 	}
 

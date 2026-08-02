@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 )
 
 // Kind identifies the type of metric an outcome carries.
@@ -73,10 +74,15 @@ type Histogram struct {
 
 // NewHistogram creates an empty histogram with the given le boundaries.
 //
+// The boundaries are copied and sorted ascending, so the caller's slice is
+// never mutated and Observe can use a simple cumulative scan.
+//
 // Observations strictly greater than the largest boundary are counted in
 // Total and Sum but in no bucket; pass math.Inf(1) as the final boundary to
 // capture every observation in a bucket.
 func NewHistogram(buckets []float64) Histogram {
+	buckets = append([]float64(nil), buckets...)
+	slices.Sort(buckets)
 	return Histogram{
 		Buckets: buckets,
 		Counts:  make([]uint64, len(buckets)),
@@ -273,7 +279,14 @@ func (r *TypedMetricRule[T]) Validate(ctx context.Context) error {
 		return Error{
 			Field: r.name,
 			Err:   fmt.Sprintf("expected data of type %T, got %T", zero, raw),
-			Code:  "TYPE_MISMATCH",
+			Code:  ErrorCodeTypeMismatch,
+		}
+	}
+	if r.fn == nil {
+		return Error{
+			Field: r.name,
+			Err:   "rule function is nil",
+			Code:  ErrorCodeRuleFuncNil,
 		}
 	}
 	outcome, err := r.fn(ctx, data)
@@ -326,7 +339,7 @@ func (r *TypedMetricRuleDataFunc[In, T]) Prepare(ctx context.Context) (any, erro
 		return nil, Error{
 			Field: r.name,
 			Err:   fmt.Sprintf("expected input of type %T, got different type", zero),
-			Code:  "TYPE_MISMATCH",
+			Code:  ErrorCodeTypeMismatch,
 		}
 	}
 
@@ -354,7 +367,7 @@ func (r *TypedMetricRuleDataFunc[In, T]) Validate(ctx context.Context) error {
 		return Error{
 			Field: r.name,
 			Err:   fmt.Sprintf("expected input of type %T, got different type", zero),
-			Code:  "TYPE_MISMATCH",
+			Code:  ErrorCodeTypeMismatch,
 		}
 	}
 
@@ -363,7 +376,7 @@ func (r *TypedMetricRuleDataFunc[In, T]) Validate(ctx context.Context) error {
 		return Error{
 			Field: r.name,
 			Err:   "metric data from prepare not available",
-			Code:  "DATA_NOT_PREPARED",
+			Code:  ErrorCodeDataNotPrepared,
 		}
 	}
 
@@ -408,6 +421,11 @@ func NewTypedMetricRuleWithPrepare[In any, T any](name string, kind Kind, field 
 
 // Report is the aggregated result of evaluating a tree whose rules may carry
 // metric outcomes.
+//
+// An outcome's error is reported twice by design: once on the metric itself
+// (Metrics[name].Err) and once in Errors. Callers that only care about
+// pass/fail should use Valid; callers that need details can read either
+// location.
 type Report struct {
 	// Valid is true when no errors were produced by any rule.
 	Valid bool
@@ -433,7 +451,9 @@ func defaultAggregation(k Kind) Aggregation {
 }
 
 // aggregateOutcomes groups emitted outcomes by name and combines each group
-// using the aggregation carried by its first outcome.
+// using the aggregation carried by its first outcome. Outcomes that carry
+// neither a Name nor a Field have no report slot and are dropped; their
+// errors, if any, are still surfaced by the driver.
 func aggregateOutcomes(outcomes []Outcome) Report {
 	report := Report{Metrics: make(map[string]Outcome, len(outcomes))}
 
@@ -443,6 +463,9 @@ func aggregateOutcomes(outcomes []Outcome) Report {
 		key := o.Name
 		if key == "" {
 			key = o.Field
+		}
+		if key == "" {
+			continue
 		}
 		if _, seen := groups[key]; !seen {
 			order = append(order, key)
@@ -562,25 +585,40 @@ func aggregateNumeric(group []Outcome, res Outcome, agg Aggregation, value func(
 	return res
 }
 
-// mergeHistograms combines histograms bucket-wise. The first non-empty
-// histogram's boundaries win; subsequent counts are summed by index.
+// mergeHistograms combines histograms. Total and Sum always accumulate. Bucket
+// counts are summed only for boundaries that exactly match the winning boundary
+// set (the first non-empty histogram's), so a histogram with a different
+// boundary layout contributes its Total and Sum but no bucket counts instead of
+// silently merging counts into the wrong bucket.
 func mergeHistograms(group []Outcome) Histogram {
 	res := group[0].Histogram
 	for _, o := range group[1:] {
 		h := o.Histogram
-		if len(res.Buckets) == 0 && len(h.Buckets) > 0 {
-			res = h
-			continue
-		}
-		for i := range res.Counts {
-			if i < len(h.Counts) {
-				res.Counts[i] += h.Counts[i]
-			}
-		}
 		res.Total += h.Total
 		res.Sum += h.Sum
+
+		if len(res.Buckets) == 0 && len(h.Buckets) > 0 {
+			res.Buckets = append([]float64(nil), h.Buckets...)
+			res.Counts = make([]uint64, len(h.Buckets))
+		}
+
+		for i, boundary := range res.Buckets {
+			if idx := boundaryIndex(h.Buckets, boundary); idx >= 0 {
+				res.Counts[i] += h.Counts[idx]
+			}
+		}
 	}
 	return res
+}
+
+// boundaryIndex returns the index of boundary in buckets, or -1 when absent.
+func boundaryIndex(buckets []float64, boundary float64) int {
+	for i, b := range buckets {
+		if b == boundary {
+			return i
+		}
+	}
+	return -1
 }
 
 // joinOutcomeErrors joins all non-nil errors carried by the group.

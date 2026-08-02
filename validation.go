@@ -31,97 +31,138 @@ func NewTarget(ctx context.Context, tree Evaluable) *Target {
 	}
 }
 
-// ValidateMulti executes the targets trees in 4 steps:
-// 1. Prepare the conditions for evaluation
-// 2. Evaluate the tree and get candidate rules
-// 3. Prepare the rule for evaluation
-// 4. Validate the prepared rules
-func ValidateMulti(ctx context.Context, targets []Target, hooks ProcessingHooks, name string) error {
-	// Attach a per-target prepared-data store so prepare results for one
-	// target never leak into another when a tree is shared between targets.
+// run executes the four-phase engine pipeline over a batch of targets:
+//
+//  1. PrepareConditions for every target (fan out / batch fetches)
+//  2. Evaluate every target and collect candidate rules
+//  3. Prepare every candidate rule (batch)
+//  4. Validate every prepared rule
+//
+// It is shared by Validate, ValidateMulti, EvaluateMetrics and
+// EvaluateMetricsMulti. When collectMetrics is true, an outcome collector is
+// attached per target during phase 4 and one Report per target is returned.
+//
+// targets is copied before per-target state is attached, so the caller's
+// slice is never mutated. Hooks receive the ctx passed by the caller: per-
+// target prepared data is not visible at the hook level, which is consistent
+// across single- and multi-target runs.
+func run(ctx context.Context, targets []Target, hooks ProcessingHooks, name string, collectMetrics bool) ([]Report, []error) {
+	// Copy so the caller's slice is never mutated: each target gets its own
+	// prepared-data store, so prepare results for one target never leak into
+	// another when a tree is shared between targets.
+	targets = append([]Target(nil), targets...)
 	for i := range targets {
 		targets[i].ctx, _ = withPreparedStore(targets[i].ctx)
 	}
 
+	// Phase 1: prepare the conditions for all targets.
 	for _, target := range targets {
-		// Prepare the conditions for evaluation
-		err := target.tree.PrepareConditions(target.ctx)
-		if err != nil {
-			// If there is an error, return immediately
-			return err
+		if err := target.tree.PrepareConditions(target.ctx); err != nil {
+			return nil, []error{err}
 		}
 	}
 
 	if hooks.AfterPrepareConditions != nil {
 		if err := hooks.AfterPrepareConditions(ctx); err != nil {
-			return err
+			return nil, []error{err}
 		}
 	}
 
-	// evaluatedRules is a map of target index to rules from evaluation
-	evaluatedRules := make(map[int][]Rule)
-
+	// Phase 2: evaluate all targets and collect candidate rules. The name is
+	// pushed onto the execution trace (if any) as the root path segment.
+	evaluated := make([][]Rule, len(targets))
 	for i, target := range targets {
-		// Evaluate the tree and get candidate rules
-		_, rules := target.tree.Evaluate(target.ctx, name)
-		evaluatedRules[i] = rules
+		if trace := traceFromContext(target.ctx); trace != nil {
+			trace.push(name)
+		}
+		_, evaluated[i] = target.tree.Evaluate(target.ctx)
+		if trace := traceFromContext(target.ctx); trace != nil {
+			trace.pop()
+		}
 	}
 
 	if hooks.AfterEvaluateConditions != nil {
 		if err := hooks.AfterEvaluateConditions(ctx); err != nil {
-			return err
+			return nil, []error{err}
 		}
 	}
 
-	// rules is a map of target index to prepared rules
-	preparedRules := make(map[int][]Rule)
-	// create a slice to hold errors
-	errs := make([]error, 0, len(targets))
-
-	for i := range targets {
-		// prepare the rule for evaluation
-		rules := evaluatedRules[i]
-		preparedRules[i] = make([]Rule, 0, len(rules))
-
-		for _, rule := range rules {
-			if _, err := rule.Prepare(targets[i].ctx); err != nil {
-				// If the rule is not valid, append the error and continue
-				errs = append(errs, err)
+	// Phase 3: prepare all rules across targets (batch).
+	targetErrs := make([][]error, len(targets))
+	prepared := make([][]Rule, len(targets))
+	for i, target := range targets {
+		for _, rule := range evaluated[i] {
+			if _, err := rule.Prepare(target.ctx); err != nil {
+				targetErrs[i] = append(targetErrs[i], err)
 				continue
 			}
-
-			// If the rule is valid, append it to the prepared rules.
-			// Typed rules self-record their prepared data in their Prepare, so
-			// the engine does not need to store it here.
-			preparedRules[i] = append(preparedRules[i], rule)
+			prepared[i] = append(prepared[i], rule)
 		}
 	}
 
 	if hooks.AfterPrepareRules != nil {
 		if err := hooks.AfterPrepareRules(ctx); err != nil {
-			return err
+			return nil, []error{err}
 		}
 	}
 
-	// Prepare errors are preserved; validate errors are appended below
+	// Phase 4: validate prepared rules per target, optionally collecting
+	// metric outcomes. The validation context carries an outcome collector
+	// so metric-carrying rules can record their outcomes while they
+	// validate; the collector is a per-evaluation side channel, so no rule
+	// is mutated and rules stay safe to share across goroutines.
+	reports := make([]Report, len(targets))
+	for i, target := range targets {
+		valCtx := target.ctx
+		var collector *outcomeCollector
+		if collectMetrics {
+			valCtx, collector = withOutcomeCollector(target.ctx)
+		}
 
-	for i := range targets {
-		// Validate prepared rules
-		for _, rule := range preparedRules[i] {
-			err := rule.Validate(targets[i].ctx)
-			if err != nil {
-				errs = append(errs, err)
+		for _, rule := range prepared[i] {
+			if err := rule.Validate(valCtx); err != nil {
+				targetErrs[i] = append(targetErrs[i], err)
 			}
+		}
+
+		if collector != nil {
+			// Surface any errors carried by emitted outcomes.
+			for _, outcome := range collector.outcomes {
+				if outcome.Err != nil {
+					targetErrs[i] = append(targetErrs[i], outcome.Err)
+				}
+			}
+
+			reports[i] = aggregateOutcomes(collector.outcomes)
+			reports[i].Errors = targetErrs[i]
+			reports[i].Valid = len(targetErrs[i]) == 0
 		}
 	}
 
 	if hooks.AfterValidateRules != nil {
 		if err := hooks.AfterValidateRules(ctx); err != nil {
-			errs = append(errs, err)
+			for i := range reports {
+				reports[i].Errors = append(reports[i].Errors, err)
+				reports[i].Valid = false
+			}
+			return reports, append(flattenErrors(targetErrs), err)
 		}
 	}
 
-	return errors.Join(errs...)
+	return reports, flattenErrors(targetErrs)
+}
+
+// ValidateMulti executes the targets trees in 4 steps:
+// 1. Prepare the conditions for evaluation
+// 2. Evaluate the tree and get candidate rules
+// 3. Prepare the rule for evaluation
+// 4. Validate the prepared rules
+//
+// targets is not mutated: per-target state is attached to a copy. name is
+// used as the root label when execution tracing is enabled.
+func ValidateMulti(ctx context.Context, targets []Target, hooks ProcessingHooks, name string) error {
+	_, errs := run(ctx, targets, hooks, name, false)
+	return joinErrors(errs)
 }
 
 // Validate executes the Evaluable tree in 4 steps:
@@ -129,79 +170,16 @@ func ValidateMulti(ctx context.Context, targets []Target, hooks ProcessingHooks,
 // 2. Evaluate the tree and get candidate rules
 // 3. Prepare the rule for evaluation
 // 4. Validate the prepared rules
+//
+// name is used as the root label when execution tracing is enabled.
 func Validate(ctx context.Context, tree Evaluable, hooks ProcessingHooks, name string) error {
-	// Attach a prepared-data store: rules and conditions record the data
-	// they retrieve during Prepare into it, and read it back in
-	// Validate/IsValid. Each evaluation gets its own
-	// store, so shared trees stay safe to reuse across goroutines.
-	ctx, _ = withPreparedStore(ctx)
-
-	// Prepare the conditions for evaluation
-	err := tree.PrepareConditions(ctx)
-	if err != nil {
-		return err
-	}
-
-	if hooks.AfterPrepareConditions != nil {
-		if err := hooks.AfterPrepareConditions(ctx); err != nil {
-			return err
-		}
-	}
-
-	// Evaluate the tree and get candidate rules
-	_, rules := tree.Evaluate(ctx, name)
-
-	if hooks.AfterEvaluateConditions != nil {
-		if err := hooks.AfterEvaluateConditions(ctx); err != nil {
-			return err
-		}
-	}
-
-	// create slices to hold errors and prepared rules
-	errs := make([]error, 0, len(rules))
-	preparedRules := make([]Rule, 0, len(rules))
-
-	// Prepare the rule for evaluation
-	for _, rule := range rules {
-		if _, err := rule.Prepare(ctx); err != nil {
-			// If the rule is not valid, append the error and continue
-			errs = append(errs, err)
-			continue
-		}
-
-		// If the rule is valid, append it to the prepared rules.
-		// Typed rules self-record their prepared data in their Prepare.
-		preparedRules = append(preparedRules, rule)
-	}
-
-	if hooks.AfterPrepareRules != nil {
-		if err := hooks.AfterPrepareRules(ctx); err != nil {
-			return err
-		}
-	}
-
-	// Validate prepared rules
-	for _, rule := range preparedRules {
-		err := rule.Validate(ctx)
-		if err != nil {
-			errs = append(errs, err)
-		}
-	}
-
-	if hooks.AfterValidateRules != nil {
-		if err := hooks.AfterValidateRules(ctx); err != nil {
-			errs = append(errs, err)
-		}
-	}
-
-	return errors.Join(errs...)
+	_, errs := run(ctx, []Target{{tree: tree, ctx: ctx}}, hooks, name, false)
+	return joinErrors(errs)
 }
 
 // EvaluateMetrics executes the tree in the same 4 steps as Validate, but also
-// collects and aggregates the Metric indicators reached during evaluation.
-// EvaluateMetrics executes the tree in the same 4 steps as Validate, but also
-// collects and aggregates the metric outcomes carried by metric-carrying
-// rules. Validation rules keep their error semantics; metric outcomes are
+// collects and aggregates the metric indicators reached during evaluation.
+// Validation rules keep their error semantics; metric outcomes are
 // aggregated into a Report keyed by metric name.
 //
 // The two-phase dataloader invariant is preserved: every condition is
@@ -212,83 +190,12 @@ func Validate(ctx context.Context, tree Evaluable, hooks ProcessingHooks, name s
 // is used; calling Validate on a tree that contains metric-carrying rules
 // simply ignores their outcomes.
 func EvaluateMetrics(ctx context.Context, tree Evaluable, hooks ProcessingHooks, name string) (Report, error) {
-	// Attach a prepared-data store: rules and conditions record the data
-	// they retrieve during Prepare into it, and read it back in
-	// Validate/IsValid.
-	ctx, _ = withPreparedStore(ctx)
-
-	// Prepare the conditions for evaluation
-	err := tree.PrepareConditions(ctx)
-	if err != nil {
+	reports, errs := run(ctx, []Target{{tree: tree, ctx: ctx}}, hooks, name, true)
+	err := joinErrors(errs)
+	if len(reports) == 0 {
 		return Report{}, err
 	}
-
-	if hooks.AfterPrepareConditions != nil {
-		if err := hooks.AfterPrepareConditions(ctx); err != nil {
-			return Report{}, err
-		}
-	}
-
-	// Evaluate the tree and get candidate rules
-	_, rules := tree.Evaluate(ctx, name)
-
-	if hooks.AfterEvaluateConditions != nil {
-		if err := hooks.AfterEvaluateConditions(ctx); err != nil {
-			return Report{}, err
-		}
-	}
-
-	errs := make([]error, 0, len(rules))
-	preparedRules := make([]Rule, 0, len(rules))
-
-	// Prepare the rule for evaluation
-	for _, rule := range rules {
-		if _, err := rule.Prepare(ctx); err != nil {
-			// If the rule is not valid, append the error and continue
-			errs = append(errs, err)
-			continue
-		}
-
-		// If the rule is valid, append it to the prepared rules.
-		// Typed rules self-record their prepared data in their Prepare.
-		preparedRules = append(preparedRules, rule)
-	}
-
-	if hooks.AfterPrepareRules != nil {
-		if err := hooks.AfterPrepareRules(ctx); err != nil {
-			return Report{}, err
-		}
-	}
-
-	// Validate prepared rules. The validation context carries an outcome
-	// collector so metric-carrying rules can record their outcomes while
-	// they validate; the collector is a per-evaluation side channel, so no
-	// rule is mutated and pure rules stay safe to share across goroutines.
-	valCtx, collector := withOutcomeCollector(ctx)
-	for _, rule := range preparedRules {
-		err := rule.Validate(valCtx)
-		if err != nil {
-			errs = append(errs, err)
-		}
-	}
-
-	// Surface any errors carried by emitted outcomes
-	for _, outcome := range collector.outcomes {
-		if outcome.Err != nil {
-			errs = append(errs, outcome.Err)
-		}
-	}
-
-	if hooks.AfterValidateRules != nil {
-		if err := hooks.AfterValidateRules(ctx); err != nil {
-			errs = append(errs, err)
-		}
-	}
-
-	report := aggregateOutcomes(collector.outcomes)
-	report.Errors = errs
-	report.Valid = len(errs) == 0
-	return report, errors.Join(errs...)
+	return reports[0], err
 }
 
 // EvaluateMetricsMulti executes the targets' trees in the same 4 steps as
@@ -300,92 +207,8 @@ func EvaluateMetrics(ctx context.Context, tree Evaluable, hooks ProcessingHooks,
 // are prepared before any evaluation, and all rules are prepared before any
 // validation runs.
 func EvaluateMetricsMulti(ctx context.Context, targets []Target, hooks ProcessingHooks, name string) ([]Report, error) {
-	// Attach a per-target prepared-data store so prepare results for one
-	// target never leak into another when a tree is shared between targets.
-	for i := range targets {
-		targets[i].ctx, _ = withPreparedStore(targets[i].ctx)
-	}
-
-	// Phase A: prepare the conditions for all targets
-	for _, target := range targets {
-		err := target.tree.PrepareConditions(target.ctx)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if hooks.AfterPrepareConditions != nil {
-		if err := hooks.AfterPrepareConditions(ctx); err != nil {
-			return nil, err
-		}
-	}
-
-	// Phase B: evaluate all targets and collect candidate rules
-	results := make([][]Rule, len(targets))
-
-	for i, target := range targets {
-		_, rules := target.tree.Evaluate(target.ctx, name)
-		results[i] = rules
-	}
-
-	if hooks.AfterEvaluateConditions != nil {
-		if err := hooks.AfterEvaluateConditions(ctx); err != nil {
-			return nil, err
-		}
-	}
-
-	// Phase C: prepare all rules across targets (batch)
-	targetErrs := make([][]error, len(targets))
-	preparedRules := make([][]Rule, len(targets))
-
-	for i, target := range targets {
-		for _, rule := range results[i] {
-			if _, err := rule.Prepare(target.ctx); err != nil {
-				targetErrs[i] = append(targetErrs[i], err)
-				continue
-			}
-			preparedRules[i] = append(preparedRules[i], rule)
-		}
-	}
-
-	if hooks.AfterPrepareRules != nil {
-		if err := hooks.AfterPrepareRules(ctx); err != nil {
-			return nil, err
-		}
-	}
-
-	// Phase D: validate rules per target, collecting their metric outcomes
-	reports := make([]Report, len(targets))
-	for i, target := range targets {
-		valCtx, collector := withOutcomeCollector(target.ctx)
-		for _, rule := range preparedRules[i] {
-			if err := rule.Validate(valCtx); err != nil {
-				targetErrs[i] = append(targetErrs[i], err)
-			}
-		}
-
-		for _, outcome := range collector.outcomes {
-			if outcome.Err != nil {
-				targetErrs[i] = append(targetErrs[i], outcome.Err)
-			}
-		}
-
-		reports[i] = aggregateOutcomes(collector.outcomes)
-		reports[i].Errors = targetErrs[i]
-		reports[i].Valid = len(targetErrs[i]) == 0
-	}
-
-	if hooks.AfterValidateRules != nil {
-		if err := hooks.AfterValidateRules(ctx); err != nil {
-			for i := range reports {
-				reports[i].Errors = append(reports[i].Errors, err)
-				reports[i].Valid = false
-			}
-			return reports, err
-		}
-	}
-
-	return reports, errors.Join(flattenErrors(targetErrs)...)
+	reports, errs := run(ctx, targets, hooks, name, true)
+	return reports, joinErrors(errs)
 }
 
 // flattenErrors flattens a slice of per-target error slices into a single
@@ -396,4 +219,17 @@ func flattenErrors(targetErrs [][]error) []error {
 		errs = append(errs, target...)
 	}
 	return errs
+}
+
+// joinErrors joins the given errors, returning nil when there are none. A
+// single error is returned bare so its identity is preserved for callers
+// that compare errors directly.
+func joinErrors(errs []error) error {
+	if len(errs) == 0 {
+		return nil
+	}
+	if len(errs) == 1 {
+		return errs[0]
+	}
+	return errors.Join(errs...)
 }

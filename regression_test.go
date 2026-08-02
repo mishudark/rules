@@ -79,7 +79,7 @@ func TestConditionEither_TrueWhenBranchSelectedEvenWithNoRules(t *testing.T) {
 		t.Fatalf("PrepareConditions failed: %v", err)
 	}
 
-	ok, matched := either.Evaluate(ctx, "root")
+	ok, matched := either.Evaluate(ctx)
 	if !ok {
 		t.Fatal("expected ConditionEither to return true when its selected branch has no rules, got false")
 	}
@@ -92,7 +92,7 @@ func TestConditionEither_TrueWhenBranchSelectedEvenWithNoRules(t *testing.T) {
 	// must still be collected.
 	other := Rules(rule)
 	allOf := AllOf(either, other)
-	ok, matched = allOf.Evaluate(ctx, "root")
+	ok, matched = allOf.Evaluate(ctx)
 	if !ok {
 		t.Fatal("expected AllOf to pass when ConditionEither branch was selected (true) even though empty; got false")
 	}

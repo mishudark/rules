@@ -34,7 +34,7 @@ Read this before touching anything in `rules.go`, `conditions.go`,
  PHASE A: Prepare                          PHASE B: Evaluate
  (fan-out / batch)                         (gate / select / run)
  ───────────────────                       ──────────────────────────
- PrepareConditions(ctx)  top-down    →   Evaluate(ctx, path) top-down
+ PrepareConditions(ctx)  top-down    →   Evaluate(ctx) top-down
  • Condition.Prepare (fetches)              • Condition.IsValid (decide)
  • recurse ALL children                     • recurse only matching
                                               children (collect []Rule)
@@ -293,13 +293,13 @@ target, e.g. via `ValidateWithData`/`ValidateMultiWithData`, which do this for
 you.
 
 ### 6.4 Execution Path Tracing
-Execution paths are recorded in an opt-in, race-free `ExecutionTrace` carried by context (rules are never mutated during evaluation):
+Execution paths are recorded in an opt-in, race-free `ExecutionTrace` carried by context (rules are never mutated during evaluation). The driver pushes the validation `name` as the root segment; each node pushes its own segment while descending, so a path is only built when tracing is on — with no trace, `Evaluate` does no path bookkeeping and allocates nothing for it:
 ```go
 ctx, trace := rules.WithExecutionTrace(ctx)
 err := rules.Validate(ctx, tree, hooks, "name")
 path := trace.Path(rule)  // e.g. "name -> root -> cond -> leafNode -> rule1"
 ```
-Tests verify this path to ensure correct tree traversal.
+Tests verify this path to ensure correct tree traversal. A trace must not be shared across concurrent evaluations (it is mutated during traversal), mirroring the guidance not to share a context across goroutines (§6.3).
 
 ### 6.5 Type Checking Options
 Multiple ways to check types, with different performance characteristics:
@@ -335,7 +335,7 @@ is essential — many "obvious" optimizations actually break the design.
    can read it back typed via `GetPreparedAs[T]` (see §6.3).
 
 **Phase B — Evaluate (select + run rules):**
-2. `Evaluable.Evaluate(ctx, path)` — re-walks the tree, calling
+2. `Evaluable.Evaluate(ctx)` — re-walks the tree, calling
    `Condition.IsValid(ctx)` on each condition to decide which branch(es)
    contribute rules; returns the candidate `[]Rule` slice. Impure
    conditions read back the typed data they recorded in `Prepare`
