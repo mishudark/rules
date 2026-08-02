@@ -21,6 +21,20 @@ func (e Error) Error() string {
 	return fmt.Sprintf("code: %s, field: %s, error: %s", e.Code, e.Field, e.Err)
 }
 
+// Error codes used by the built-in rules and conditions.
+const (
+	// ErrorCodeTypeMismatch is returned when the registered data does not
+	// match the type the rule or condition expects.
+	ErrorCodeTypeMismatch = "TYPE_MISMATCH"
+	// ErrorCodeDataNotPrepared is returned when a rule's Validate runs
+	// without its Prepare having recorded data (e.g. Validate was called
+	// directly, outside the engine).
+	ErrorCodeDataNotPrepared = "DATA_NOT_PREPARED"
+	// ErrorCodeRuleFuncNil is returned when a rule or condition was
+	// constructed without its validation function.
+	ErrorCodeRuleFuncNil = "RULE_FUNC_NIL"
+)
+
 // Condition represents a function that evaluates to true or false, typically
 // used within conditional nodes (like ConditionNode) to determine whether
 // associated rules or child nodes should be processed.
@@ -80,7 +94,12 @@ type Evaluable interface {
 	// Evaluate checks the conditions of the component and returns whether it
 	// passes (bool) and the list of Rules associated with it if it passes.
 	// If the conditions are not met, it returns false and a nil slice of Rules.
-	Evaluate(ctx context.Context, executionPath string) (bool, []Rule)
+	//
+	// When the context carries an ExecutionTrace (see WithExecutionTrace),
+	// the node pushes its name onto the trace while descending and each rule
+	// reached by a LeafNode is recorded with its execution path. Without a
+	// trace, traversal does no path bookkeeping and allocates nothing for it.
+	Evaluate(ctx context.Context) (bool, []Rule)
 }
 
 // LeafNode represents a terminal node in the validation evaluation tree.
@@ -103,10 +122,10 @@ func (r *LeafNode) PrepareConditions(ctx context.Context) error {
 // If the context carries an ExecutionTrace (see WithExecutionTrace), the
 // path of each rule is recorded in the trace. Rules are never mutated, so a
 // LeafNode is safe for concurrent evaluation.
-func (n *LeafNode) Evaluate(ctx context.Context, executionPath string) (bool, []Rule) {
+func (n *LeafNode) Evaluate(ctx context.Context) (bool, []Rule) {
 	if trace := traceFromContext(ctx); trace != nil {
 		for _, rule := range n.Rules {
-			trace.record(rule, fmt.Sprintf("%s -> %s -> %s", executionPath, "leafNode", rule.Name()))
+			trace.record(rule, trace.joinPath("leafNode", rule.Name()))
 		}
 	}
 
@@ -165,15 +184,20 @@ func (n *ConditionNode) PrepareConditions(ctx context.Context) error {
 // the Condition. If the Condition is nil or evaluates to false, Evaluate returns
 // false and nil rules. If the Condition is true, it evaluates each child Evaluable,
 // collecting and returning all Rules from children that evaluate successfully (return true).
-func (n *ConditionNode) Evaluate(ctx context.Context, executionPath string) (bool, []Rule) {
+func (n *ConditionNode) Evaluate(ctx context.Context) (bool, []Rule) {
 	if n.Condition == nil || !n.Condition.IsValid(ctx) {
 		return false, nil
+	}
+
+	if trace := traceFromContext(ctx); trace != nil {
+		trace.push(n.Condition.Name())
+		defer trace.pop()
 	}
 
 	matchRules := []Rule{}
 
 	for _, evaluable := range n.Evaluables {
-		ok, rules := evaluable.Evaluate(ctx, fmt.Sprintf("%s -> %s", executionPath, n.Condition.Name()))
+		ok, rules := evaluable.Evaluate(ctx)
 		if ok {
 			matchRules = append(matchRules, rules...)
 		}
@@ -210,16 +234,20 @@ func (n *AllOfNode) PrepareConditions(ctx context.Context) error {
 // returns false and nil rules. If all children evaluate to true, it returns true
 // and the combined list of Rules gathered from all children. An empty AllOfNode
 // is considered successful.
-func (n *AllOfNode) Evaluate(ctx context.Context, executionPath string) (bool, []Rule) {
+func (n *AllOfNode) Evaluate(ctx context.Context) (bool, []Rule) {
 	acc := []Rule{}
 
 	if len(n.Children) == 0 {
 		return true, acc // An empty AND condition is trivially true.
 	}
 
+	if trace := traceFromContext(ctx); trace != nil {
+		trace.push("allOfNode")
+		defer trace.pop()
+	}
+
 	for i := range n.Children {
-		child := n.Children[i]
-		ok, rules := child.Evaluate(ctx, fmt.Sprintf("%s -> %s", executionPath, "allOfNode"))
+		ok, rules := n.Children[i].Evaluate(ctx)
 		if ok {
 			acc = append(acc, rules...)
 		} else {
@@ -259,7 +287,7 @@ func (n *AnyOfNode) PrepareConditions(ctx context.Context) error {
 // true along with the combined list of Rules gathered from *all* successful
 // children. If no children evaluate to true, it returns false and nil rules.
 // An empty AnyOfNode is considered successful (or perhaps should be false, depending on desired logic - current impl returns true).
-func (n *AnyOfNode) Evaluate(ctx context.Context, executionPath string) (bool, []Rule) {
+func (n *AnyOfNode) Evaluate(ctx context.Context) (bool, []Rule) {
 	acc := []Rule{}
 
 	if len(n.Children) == 0 {
@@ -267,16 +295,19 @@ func (n *AnyOfNode) Evaluate(ctx context.Context, executionPath string) (bool, [
 		return true, acc
 	}
 
-	var anyOk bool
-
-	nodeName := n.name
-	if nodeName == "" {
-		nodeName = "anyOfNode"
+	if trace := traceFromContext(ctx); trace != nil {
+		nodeName := n.name
+		if nodeName == "" {
+			nodeName = "anyOfNode"
+		}
+		trace.push(nodeName)
+		defer trace.pop()
 	}
 
+	var anyOk bool
+
 	for i := range n.Children {
-		child := n.Children[i]
-		ok, rules := child.Evaluate(ctx, fmt.Sprintf("%s -> %s", executionPath, nodeName))
+		ok, rules := n.Children[i].Evaluate(ctx)
 		if ok {
 			anyOk = true
 			acc = append(acc, rules...) // Collect rules from all successful children.
@@ -443,25 +474,33 @@ func (n *ConditionEither) PrepareConditions(ctx context.Context) error {
 // Evaluate implements the Evaluable interface for ConditionEither. It checks
 // the Condition. If the Condition is true, it evaluates the left Evaluables.
 // If the Condition is false or nil, it evaluates the right Evaluables.
-func (n *ConditionEither) Evaluate(ctx context.Context, executionPath string) (bool, []Rule) {
+func (n *ConditionEither) Evaluate(ctx context.Context) (bool, []Rule) {
 	var matchRules []Rule
 
 	if n.Condition != nil && n.Condition.IsValid(ctx) {
+		if trace := traceFromContext(ctx); trace != nil {
+			trace.push(fmt.Sprintf("%s (true)", n.Condition.Name()))
+			defer trace.pop()
+		}
 		// Condition is true, evaluate left branch
 		for _, evaluable := range n.Left {
-			ok, rules := evaluable.Evaluate(ctx, fmt.Sprintf("%s -> %s (true)", executionPath, n.Condition.Name()))
+			ok, rules := evaluable.Evaluate(ctx)
 			if ok {
 				matchRules = append(matchRules, rules...)
 			}
 		}
 	} else {
-		// Condition is false or nil, evaluate right branch
-		for _, evaluable := range n.Right {
+		if trace := traceFromContext(ctx); trace != nil {
 			conditionName := "nil"
 			if n.Condition != nil {
 				conditionName = n.Condition.Name()
 			}
-			ok, rules := evaluable.Evaluate(ctx, fmt.Sprintf("%s -> %s (false)", executionPath, conditionName))
+			trace.push(fmt.Sprintf("%s (false)", conditionName))
+			defer trace.pop()
+		}
+		// Condition is false or nil, evaluate right branch
+		for _, evaluable := range n.Right {
+			ok, rules := evaluable.Evaluate(ctx)
 			if ok {
 				matchRules = append(matchRules, rules...)
 			}
@@ -562,7 +601,9 @@ func NewChainRules(rules ...Rule) Rule {
 	return &ChainRules{Rules: rules}
 }
 
-// RuleBase provides a basic implementation of the Rule interface.
+// RuleBase is an empty embed marker for Rule implementations. It carries no
+// state: rules store their data in the per-evaluation preparedStore, never on
+// themselves, so all rules remain safe to share across goroutines.
 type RuleBase struct{}
 
 // RulePure provides a basic implementation of the Rule interface by wrapping
@@ -686,6 +727,9 @@ func (c *ConditionPure) Name() string {
 }
 
 func (c *ConditionPure) IsValid(ctx context.Context) bool {
+	if c.condition == nil {
+		return false
+	}
 	return c.condition()
 }
 
@@ -813,7 +857,14 @@ func (r *TypedRulePure[T]) Validate(ctx context.Context) error {
 		return Error{
 			Field: r.name,
 			Err:   fmt.Sprintf("expected data of type %T, got %T", zero, raw),
-			Code:  "TYPE_MISMATCH",
+			Code:  ErrorCodeTypeMismatch,
+		}
+	}
+	if r.fn == nil {
+		return Error{
+			Field: r.name,
+			Err:   "rule function is nil",
+			Code:  ErrorCodeRuleFuncNil,
 		}
 	}
 	return r.fn(ctx, data)
@@ -852,6 +903,9 @@ func NewTypedCondition[T any](name string, fn func(ctx context.Context, data T) 
 	return &ConditionFunc{
 		name: name,
 		predicate: func(ctx context.Context) bool {
+			if fn == nil {
+				return false
+			}
 			data, ok := GetAs[T](ctx)
 			if !ok {
 				return false
@@ -892,7 +946,7 @@ func (r *TypedRuleDataFunc[In, T]) Prepare(ctx context.Context) (any, error) {
 		return nil, Error{
 			Field: r.name,
 			Err:   fmt.Sprintf("expected input of type %T, got different type", zero),
-			Code:  "TYPE_MISMATCH",
+			Code:  ErrorCodeTypeMismatch,
 		}
 	}
 
@@ -922,7 +976,7 @@ func (r *TypedRuleDataFunc[In, T]) Validate(ctx context.Context) error {
 		return Error{
 			Field: r.name,
 			Err:   fmt.Sprintf("expected input of type %T, got different type", zero),
-			Code:  "TYPE_MISMATCH",
+			Code:  ErrorCodeTypeMismatch,
 		}
 	}
 
@@ -931,7 +985,7 @@ func (r *TypedRuleDataFunc[In, T]) Validate(ctx context.Context) error {
 		return Error{
 			Field: r.name,
 			Err:   "validation data from prepare not available",
-			Code:  "DATA_NOT_PREPARED",
+			Code:  ErrorCodeDataNotPrepared,
 		}
 	}
 

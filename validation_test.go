@@ -322,3 +322,32 @@ func TestValidateMulti_HookError(t *testing.T) {
 		t.Fatalf("expected hook error, got: %v", err)
 	}
 }
+
+// Regression test: ValidateMulti/EvaluateMetricsMulti must not mutate the
+// caller's []Target (previously each target's ctx was overwritten in place
+// with a prepared store).
+func TestValidateMulti_DoesNotMutateTargets(t *testing.T) {
+	t.Parallel()
+
+	rule := NewRulePure("noop", func() error { return nil })
+	tree := Root(Rules(rule))
+	ctx := context.Background()
+
+	targets := []Target{
+		{tree: tree, ctx: ctx},
+		{tree: tree, ctx: ctx},
+	}
+
+	if err := ValidateMulti(context.Background(), targets, ProcessingHooks{}, "test"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, err := EvaluateMetricsMulti(context.Background(), targets, ProcessingHooks{}, "test"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for i, target := range targets {
+		if preparedStoreFromContext(target.ctx) != nil {
+			t.Errorf("target %d ctx was mutated by the multi drivers (prepared store attached)", i)
+		}
+	}
+}

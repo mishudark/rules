@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"sync"
 	"testing"
 )
@@ -55,6 +56,77 @@ func TestHistogram_Observe(t *testing.T) {
 		if c != want[i] {
 			t.Errorf("Counts[%d] = %d, want %d (le %v)", i, c, want[i], hist.Buckets[i])
 		}
+	}
+}
+
+func TestNewHistogram_SortsAndCopies(t *testing.T) {
+	t.Parallel()
+
+	buckets := []float64{30, 10, 20}
+	hist := NewHistogram(buckets)
+
+	// The caller's slice must not be mutated.
+	if !slices.Equal(buckets, []float64{30, 10, 20}) {
+		t.Errorf("caller bucket slice was mutated: %v", buckets)
+	}
+	if !slices.Equal(hist.Buckets, []float64{10, 20, 30}) {
+		t.Errorf("Buckets = %v, want [10 20 30]", hist.Buckets)
+	}
+	if len(hist.Counts) != 3 {
+		t.Errorf("len(Counts) = %d, want 3", len(hist.Counts))
+	}
+}
+
+// Regression test: merging histograms with different boundary layouts must
+// not silently sum counts into the wrong bucket, and a histogram without
+// buckets must not lose its Total/Sum.
+func TestMergeHistograms_MismatchedBoundaries(t *testing.T) {
+	t.Parallel()
+
+	// First histogram has no buckets but recorded observations.
+	empty := Histogram{Buckets: nil, Counts: nil, Total: 2, Sum: 30}
+	// Second histogram uses a different boundary layout.
+	other := NewHistogram([]float64{100, 200})
+	other.Total = 1
+	other.Sum = 150
+	other.Counts[0] = 1
+
+	merged := mergeHistograms([]Outcome{
+		{Kind: KindHistogram, Histogram: empty},
+		{Kind: KindHistogram, Histogram: other},
+	})
+
+	if merged.Total != 3 {
+		t.Errorf("Total = %d, want 3", merged.Total)
+	}
+	if merged.Sum != 180 {
+		t.Errorf("Sum = %v, want 180", merged.Sum)
+	}
+	if len(merged.Buckets) != 2 {
+		t.Fatalf("expected 2 buckets, got %d", len(merged.Buckets))
+	}
+	if !slices.Equal(merged.Counts, []uint64{1, 0}) {
+		t.Errorf("Counts = %v, want [1 0]", merged.Counts)
+	}
+
+	// A boundary present in one histogram but not the other is not summed:
+	// boundary 20 has no match in [10 30], so it contributes Total/Sum only.
+	a := NewHistogram([]float64{10, 20})
+	a.Total, a.Sum = 2, 25
+	a.Counts[0], a.Counts[1] = 1, 1
+	b := NewHistogram([]float64{10, 30})
+	b.Total, b.Sum = 2, 35
+	b.Counts[0], b.Counts[1] = 1, 1
+
+	m2 := mergeHistograms([]Outcome{
+		{Kind: KindHistogram, Histogram: a},
+		{Kind: KindHistogram, Histogram: b},
+	})
+	if m2.Total != 4 || m2.Sum != 60 {
+		t.Errorf("Total/Sum = %d/%v, want 4/60", m2.Total, m2.Sum)
+	}
+	if !slices.Equal(m2.Counts, []uint64{2, 1}) {
+		t.Errorf("Counts = %v, want [2 1] (boundary 20 not summed into a wrong bucket)", m2.Counts)
 	}
 }
 

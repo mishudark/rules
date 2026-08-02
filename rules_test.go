@@ -71,7 +71,8 @@ func TestValidateTree(t *testing.T) {
 			t.Parallel()
 
 			ctx, trace := WithExecutionTrace(context.Background())
-			_, rules := tc.tree.Evaluate(ctx, "tree")
+			trace.push("tree")
+			_, rules := tc.tree.Evaluate(ctx)
 			length := len(rules)
 
 			if length != tc.expect {
@@ -242,7 +243,7 @@ func TestConditionEither(t *testing.T) {
 
 		either := Either(trueCond, []Evaluable{Rules(leftRule)}, []Evaluable{Rules(errRule)})
 		ctx := context.Background()
-		ok, rules := either.Evaluate(ctx, "test")
+		ok, rules := either.Evaluate(ctx)
 		if !ok {
 			t.Error("expected evaluation to succeed")
 		}
@@ -256,7 +257,7 @@ func TestConditionEither(t *testing.T) {
 
 		either := Either(falseCond, []Evaluable{Rules(errRule)}, []Evaluable{Rules(rightRule)})
 		ctx := context.Background()
-		ok, rules := either.Evaluate(ctx, "test")
+		ok, rules := either.Evaluate(ctx)
 		if !ok {
 			t.Error("expected evaluation to succeed")
 		}
@@ -270,7 +271,7 @@ func TestConditionEither(t *testing.T) {
 
 		either := Either(nil, []Evaluable{Rules(errRule)}, []Evaluable{Rules(rightRule)})
 		ctx := context.Background()
-		ok, rules := either.Evaluate(ctx, "test")
+		ok, rules := either.Evaluate(ctx)
 		if !ok {
 			t.Error("expected evaluation to succeed")
 		}
@@ -303,6 +304,43 @@ func TestIsNil(t *testing.T) {
 			t.Error("expected IsNil to return true when no registry")
 		}
 	})
+}
+
+// Regression test: rules and conditions constructed without their validation
+// function must fail gracefully instead of panicking.
+func TestNilFunctions_DoNotPanic(t *testing.T) {
+	t.Parallel()
+
+	// Rules report a structured RULE_FUNC_NIL error.
+	rule := NewTypedRule[string]("nilFn", nil)
+	err := rule.Validate(WithRegistry(context.Background(), NewDataRegistry("data")))
+	if err == nil {
+		t.Fatal("expected RULE_FUNC_NIL error, got nil")
+	}
+	if e, ok := err.(Error); !ok || e.Code != ErrorCodeRuleFuncNil {
+		t.Fatalf("expected RULE_FUNC_NIL error, got %v", err)
+	}
+
+	metricRule := NewTypedMetricRule[string]("nilMetric", KindCounter, "m", nil)
+	err = metricRule.Validate(WithRegistry(context.Background(), NewDataRegistry("data")))
+	if e, ok := err.(Error); !ok || e.Code != ErrorCodeRuleFuncNil {
+		t.Fatalf("expected RULE_FUNC_NIL error from metric rule, got %v", err)
+	}
+
+	// Conditions evaluate to false instead of panicking.
+	condCtx := WithRegistry(context.Background(), NewDataRegistry("data"))
+	if NewCondition("nilFn", nil).IsValid(condCtx) {
+		t.Error("expected nil-predicate condition to be false")
+	}
+	if NewConditionPure("nilFn", nil).IsValid(condCtx) {
+		t.Error("expected nil-func ConditionPure to be false")
+	}
+	if NewTypedCondition[string]("nilFn", nil).IsValid(condCtx) {
+		t.Error("expected nil-func typed condition to be false")
+	}
+	if FastTypeSwitch("nilFn", nil).IsValid(condCtx) {
+		t.Error("expected nil-check FastTypeSwitch to be false")
+	}
 }
 
 func TestHasField(t *testing.T) {
