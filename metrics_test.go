@@ -20,9 +20,7 @@ type loggingMetricRule struct {
 	log  *eventLog
 }
 
-func (r *loggingMetricRule) Name() string                 { return r.name }
-func (r *loggingMetricRule) SetExecutionPath(path string) {}
-func (r *loggingMetricRule) GetExecutionPath() string     { return "" }
+func (r *loggingMetricRule) Name() string { return r.name }
 func (r *loggingMetricRule) Prepare(context.Context) (any, error) {
 	r.log.add("prepareRule:%s", r.name)
 	return nil, nil

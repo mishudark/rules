@@ -67,16 +67,6 @@ type Rule interface {
 	// data Prepare recorded via [GetPreparedAs] (typed); pure rules may ignore
 	// it. Returns an error if validation fails, otherwise nil.
 	Validate(ctx context.Context) error
-	// SetExecutionPath allows setting a path for execution context.
-	//
-	// Deprecated: mutating rules during evaluation makes shared trees unsafe
-	// for concurrent use. Use WithExecutionTrace instead. The engine no
-	// longer calls this method.
-	SetExecutionPath(path string)
-	// GetExecutionPath retrieves the execution path for the rule.
-	//
-	// Deprecated: use ExecutionTrace.Path instead.
-	GetExecutionPath() string
 }
 
 // Evaluable represents any component (like a node or a set of rules) within the
@@ -572,20 +562,8 @@ func NewChainRules(rules ...Rule) Rule {
 	return &ChainRules{Rules: rules}
 }
 
-// RuleBase provides a basic implementation of the Rule execution path.
-type RuleBase struct {
-	executionPath string
-}
-
-// SetExecutionPath sets the execution path for the RuleBase.
-func (r *RuleBase) SetExecutionPath(path string) {
-	r.executionPath = path
-}
-
-// GetExecutionPath retrieves the execution path for the RuleBase.
-func (r *RuleBase) GetExecutionPath() string {
-	return r.executionPath
-}
+// RuleBase provides a basic implementation of the Rule interface.
+type RuleBase struct{}
 
 // RulePure provides a basic implementation of the Rule interface by wrapping
 // a single function. This function represents the core validation logic.

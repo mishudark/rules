@@ -832,8 +832,6 @@ fmt.Println(trace.Path(rule))
 // "validate -> root -> isPremium -> leafNode -> checkAge"
 ```
 
-The legacy `SetExecutionPath`/`GetExecutionPath` methods are deprecated; use `ExecutionTrace` instead.
-
 ---
 
 ## Performance
