@@ -4,51 +4,116 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/mishudark/rules.svg)](https://pkg.go.dev/github.com/mishudark/rules)
 [![Build Status](https://github.com/mishudark/rules/actions/workflows/go.yml/badge.svg)](https://github.com/mishudark/rules/actions/workflows/go.yml)
 
-A flexible **rule engine** for Go that lets you build and evaluate complex validation logic as a tree structure. Think of it as composable, conditional decision trees for validation.
+The Go Rules Engine is a library for building and evaluating complex validation
+logic as a tree of small, composable pieces. Each piece is either a **rule** (a
+check that produces an error) or a **condition** (a boolean gate that decides
+which branches of the tree apply). The engine walks the tree, selects the
+applicable rules, and runs them against your data.
 
-- **Composable** — Build small pieces, compose into complex trees
-- **Reusable** — Build trees once, validate many different data instances
-- **Type-safe** — Generics for compile-time safety in rules and conditions
-- **Performant** — ~500-1000ns per full tree evaluation
+The result is validation you can build once and reuse across many data
+instances, batch across thousands of targets, and even share safely across
+goroutines — without giving up type safety or performance.
 
-## When to use this?
+- **Composable** — Build small pieces, compose them into complex trees.
+- **Reusable** — Build trees once, validate many different data instances.
+- **Type-safe** — Generics give you compile-time safety in rules and conditions.
+- **Performant** — Roughly 500–1000 ns per full tree evaluation, zero allocations for type checks.
+- **Concurrency-safe** — All rules and conditions are stateless; a single tree can be shared across goroutines.
+- **Dataloader-friendly** — A two-phase prepare/evaluate design lets fetches fan out into one batched round-trip.
 
-- **Feature flags** — enable features based on user attributes
-- **A/B testing** — route users to different experiences
-- **Form validation** — validate complex forms with conditions
-- **Business rules** — implement decision trees that non-developers can visualize
-- **Reusable validation** — build rule trees once, validate against different data
-- **Key metric indicators (KMIs)** — counters, histograms, and scores computed in the same tree as validation
+## Table of contents
 
----
+- [When to use it](#when-to-use-it)
+- [Installation](#installation)
+- [Quick start](#quick-start)
+- [Core concepts](#core-concepts)
+- [Common patterns](#common-patterns)
+- [How validation works](#how-validation-works)
+- [Reusable trees (data registry pattern)](#reusable-trees-data-registry-pattern)
+- [Conditional logic](#conditional-logic)
+- [Runtime type conditions](#runtime-type-conditions)
+- [Common validators](#common-validators)
+- [Full example: user registration](#full-example-user-registration)
+- [Key metric indicators (KMIs)](#key-metric-indicators-kmis)
+- [Error handling](#error-handling)
+- [Batch validation](#batch-validation)
+- [Execution path tracing](#execution-path-tracing)
+- [Concurrency and reuse](#concurrency-and-reuse)
+- [Performance](#performance)
+- [API reference](#api-reference)
+- [Best practices](#best-practices)
+- [Learn more](#learn-more)
 
-## Quick Start
+## When to use it
+
+- **Feature flags** — enable features based on user attributes.
+- **A/B testing** — route users to different experiences.
+- **Form validation** — validate complex forms with conditions.
+- **Business rules** — implement decision trees that non-developers can visualize.
+- **Reusable validation** — build rule trees once, validate against different data.
+- **Key metric indicators (KMIs)** — counters, histograms, and scores computed in the same tree as validation.
+
+## Installation
 
 ```bash
 go get github.com/mishudark/rules
 ```
 
-**Minimal example — validate a user's age:**
+Requires **Go 1.26 or later**.
+
+## Quick start
+
+The minimal example below validates that an age is at least 18.
 
 ```go
 import (
     "context"
+
     "github.com/mishudark/rules"
     "github.com/mishudark/rules/validators"
 )
 
-type User struct { Age int }
+type User struct{ Age int }
 
 tree := rules.Rules(validators.MinValue("age", 25, 18))
-err := rules.ValidateWithData(context.Background(), tree, rules.ProcessingHooks{}, "check", User{Age: 25})
+
+err := rules.ValidateWithData(
+    context.Background(), tree, rules.ProcessingHooks{}, "check", User{Age: 25},
+)
 // err == nil
 ```
 
----
+`ValidateWithData` is the fastest way to run a tree: it wraps your data in a
+registry, attaches it to the context, and runs the validation pipeline. If
+validation fails, the returned error contains structured details; see
+[Error handling](#error-handling).
 
-## Quick Examples
+## Core concepts
 
-### Simple validation (closure-based — data bound at construction)
+A validation tree is made of three kinds of components:
+
+| Component | Role | Interface |
+|-----------|------|-----------|
+| **Rule** | A single validation unit. Produces an `error` (or `nil`). | `Rule` — `Prepare`, `Validate`, `Name` |
+| **Condition** | A boolean gate that controls whether child rules run. | `Condition` — `Prepare`, `IsValid`, `Name`, `IsPure` |
+| **Evaluable** | Any tree component that can be evaluated: nodes, branches, and leaves. | `Evaluable` — `PrepareConditions`, `Evaluate` |
+
+The distinction matters:
+
+- **Conditions gate; rules check.** A condition decides *which* branch of the
+  tree contributes rules. A rule decides *whether* the data is valid.
+- **Leaves hold rules.** `Rules(...)` creates a leaf whose rules must all pass.
+- **Nodes hold conditions.** `Node(condition, children...)` runs its children
+  only when the condition is true.
+
+The engine evaluates a tree in **two phases** (described in
+[How validation works](#how-validation-works)): first it *prepares* every
+condition and rule (fetching any data they need), then it *evaluates* the tree
+and runs the selected rules.
+
+## Common patterns
+
+### Simple validation
 
 ```go
 user := User{Age: 25, Country: "USA"}
@@ -64,9 +129,9 @@ err := rules.ValidateWithData(context.Background(), tree, rules.ProcessingHooks{
 // err == nil
 ```
 
-### Reusable validation (data registry pattern — data bound at validation time)
+### Reusable validation
 
-Build the tree once, reuse with different data:
+Build the tree once, reuse it with different data:
 
 ```go
 tree := rules.Node(
@@ -85,6 +150,9 @@ for _, user := range users {
     err := rules.ValidateWithData(ctx, tree, hooks, "ageCheck", user)
 }
 ```
+
+Because rules and conditions are stateless, this tree is safe to share across
+goroutines. See [Concurrency and reuse](#concurrency-and-reuse).
 
 ### Multiple rules (all must pass)
 
@@ -107,39 +175,60 @@ tree := rules.Rules(
 )
 ```
 
----
+`rules.Or` combines rules at the rule level (use it inside `Rules()`).
+`rules.AnyOf` combines branches at the tree level (use it as a node); see
+[Conditional logic](#conditional-logic).
 
-## How Validation Works
+## How validation works
 
-Validation executes in **4 strictly separated phases**:
+Validation executes in **four strictly ordered steps**:
 
 ```
 PrepareConditions → Evaluate → Prepare → Validate
 ```
 
-| Phase | What happens |
-|-------|-------------|
-| **PrepareConditions** | Conditions with side effects (impure) fetch data from DB/API and return it. Pure conditions skip this. |
-| **Evaluate** | Walk the tree: check conditions, collect candidate rules |
-| **Prepare** | Each candidate rule fetches data it needs and returns it |
-| **Validate** | Run each rule's validation logic, reading its prepared data back typed via `GetPreparedAs[T]`, collect errors |
+| Step | What happens |
+|------|--------------|
+| **PrepareConditions** | Walk the whole tree top-down, calling `Condition.Prepare(ctx)` on every condition. Impure conditions (with side effects) fetch data here — from a database, an API, or a dataloader. Pure conditions skip this. |
+| **Evaluate** | Re-walk the tree, calling `Condition.IsValid(ctx)` on each condition to select which branches contribute rules. Returns the candidate `[]Rule`. |
+| **Prepare** | Call `Rule.Prepare(ctx)` on every candidate rule. Typed rules fetch any data they need and record it. |
+| **Validate** | Call `Rule.Validate(ctx)` on every prepared rule. Rules read their prepared data back typed via `GetPreparedAs[T]`, and errors are collected. |
 
-The phases never interleave: **every** condition is prepared before any rule is prepared, and **every** rule is prepared before any validation runs. `ValidateMulti` extends this across targets — all targets' conditions are prepared before any evaluation, and all targets' rules before any validation.
+The steps never interleave: **every** condition is prepared before any rule is
+prepared, and **every** rule is prepared before any validation runs.
+`ValidateMulti` extends this ordering across targets — all targets' conditions
+are prepared before any evaluation, and all targets' rules before any
+validation.
 
-**Data injection:** `Prepare` returns the data it retrieved (`any`) and records it in a per-evaluation preparedStore (keyed by the rule/condition instance). `Validate` and `IsValid` read that data back typed via `GetPreparedAs[T]` (or untyped via `GetPrepared`). Rules and conditions keep no state — a single tree can be reused and shared across goroutines, and dataloaders can fan out every fetch in the Prepare sweep.
+**Data injection.** `Prepare` returns the data it retrieved (`any`); typed
+rules and conditions record it in a per-evaluation prepared store keyed by
+themselves. `Validate` and `IsValid` read it back typed via
+`GetPreparedAs[T]` (or untyped via `GetPrepared`):
 
 ```go
 data, ok := rules.GetPreparedAs[Permissions](ctx, r) // typed read
 ```
 
+Because prepared data travels in the context — never on the rule or condition —
+rules and conditions stay stateless and safe to share across goroutines.
+
 ### Dataloader-friendly by design
 
-This ordering exists so `Prepare` implementations can fan out fetches through a [dataloader](https://github.com/graph-gophers/dataloader)-style batcher and pay a single round-trip per phase instead of one per node:
+This ordering exists so `Prepare` implementations can fan out fetches through a
+[dataloader](https://github.com/graph-gophers/dataloader)-style batcher and pay
+a single round-trip per phase instead of one per node:
 
-- **Impure `Node` conditions**: children are prepared even when the condition turns out false — short-circuiting would serialize fetches across branches (N+1).
-- **Impure `Either` conditions**: **both** branches are prepared, for the same reason.
-- **Pure conditions**: evaluated immediately during `PrepareConditions`; a pure-false condition prunes its whole subtree (safe, because pure means no fetches to lose).
-- **Composite rules** (`Or`, `ChainRules`): `Prepare` runs on **all** children regardless of their short-circuit `Validate` semantics — preparation is setup work.
+- **Impure `Node` conditions**: children are prepared even when the condition
+  turns out false — short-circuiting would serialize fetches across branches
+  (N+1).
+- **Impure `Either` conditions**: both branches are prepared, for the same
+  reason.
+- **Pure conditions**: evaluated immediately during `PrepareConditions`; a
+  pure-false condition prunes its whole subtree (safe, because pure means no
+  fetches to lose).
+- **Composite rules** (`Or`, `ChainRules`): `Prepare` runs on all children
+  regardless of their short-circuit `Validate` semantics — preparation is setup
+  work.
 
 ```go
 rule := rules.NewTypedRuleWithPrepare(
@@ -148,13 +237,16 @@ rule := rules.NewTypedRuleWithPrepare(
         return loader.Load(ctx, u.Email) // batched with all other Prepare fetches
     },
     func(ctx context.Context, u User, data EmailData) error {
-        if data.Exists { return fmt.Errorf("email already in use") }
+        if data.Exists {
+            return fmt.Errorf("email already in use")
+        }
         return nil
     },
 )
 ```
 
-Hooks can be injected at each phase boundary via `ProcessingHooks` — a natural place to flush a dataloader:
+**Hooks.** `ProcessingHooks` lets you inject code at each step boundary — a
+natural place to flush a dataloader:
 
 ```go
 hooks := rules.ProcessingHooks{
@@ -165,18 +257,19 @@ hooks := rules.ProcessingHooks{
 }
 ```
 
-Hook error semantics: errors from the first three hooks halt validation immediately; an `AfterValidateRules` error is joined with the collected validation errors via `errors.Join` and returned together.
+Hook error semantics: errors from the first three hooks halt validation
+immediately; an `AfterValidateRules` error is joined with the collected
+validation errors via `errors.Join` and returned together.
 
----
+## Reusable trees (data registry pattern)
 
-## Reusable Trees (Data Registry Pattern)
-
-This is the **recommended pattern** for most use cases. Build trees once, reuse across many data instances.
+This is the **recommended pattern** for most use cases: build trees once and
+reuse them across many data instances.
 
 ### Why reusable trees?
 
-| Aspect | Closure-Based | Data Registry |
-|--------|--------------|---------------|
+| Aspect | Closure-based | Data registry |
+|--------|---------------|---------------|
 | Tree reuse | Build per validation | Build once, reuse many |
 | Performance | Slower (allocation per request) | Fast (shared tree) |
 | Testability | Harder (data bound at construction) | Easier (inject data at validation) |
@@ -184,9 +277,10 @@ This is the **recommended pattern** for most use cases. Build trees once, reuse 
 
 ### How it works
 
-1. **Build the tree** at startup or in a separate package using typed rules/conditions
-2. **Store data** in the context using `DataRegistry` at validation time
-3. **Access data** in rules/conditions via `Get` or `GetAs[T]`
+1. **Build the tree** at startup or in a separate package using typed rules
+   and conditions.
+2. **Store data** in the context with a `DataRegistry` at validation time.
+3. **Access data** in rules and conditions via `Get` or `GetAs[T]`.
 
 ```go
 var userValidationTree = rules.Node(
@@ -207,15 +301,23 @@ var userValidationTree = rules.Node(
     ),
 )
 
+errs := make([]error, len(users))
 for i, user := range users {
-    err := rules.ValidateWithData(ctx, userValidationTree, hooks, "validate", user)
-    errs[i] = err
+    errs[i] = rules.ValidateWithData(ctx, userValidationTree, hooks, "validate", user)
 }
 ```
 
----
+`ValidateWithData` is a convenience wrapper around
+`NewDataRegistry(data)` + `WithRegistry(ctx, reg)` + `Validate(...)`. For the
+manual version:
 
-## Conditional Logic
+```go
+reg := rules.NewDataRegistry(data)
+ctx := rules.WithRegistry(ctx, reg)
+err := rules.Validate(ctx, tree, hooks, "name")
+```
+
+## Conditional logic
 
 ### Node (if condition, then validate)
 
@@ -227,18 +329,22 @@ tree := rules.Node(
 )
 ```
 
-### Either/Then (if-else)
+### Either (if-else)
 
 ```go
 tree := rules.Either(
     rules.NewConditionPure("isPremium", func() bool { return user.Plan == "premium" }),
     // Left branch (condition true): premium rules
-    rules.Rules(
-        validators.MinValue("age", user.Age, 18),
-        validators.URL(user.Website, []string{"https"}),
-    ),
+    []rules.Evaluable{
+        rules.Rules(
+            validators.MinValue("age", user.Age, 18),
+            validators.URL(user.Website, []string{"https"}),
+        ),
+    },
     // Right branch (condition false): free user rules
-    rules.Rules(validators.MinValue("age", user.Age, 13)),
+    []rules.Evaluable{
+        rules.Rules(validators.MinValue("age", user.Age, 13)),
+    },
 )
 ```
 
@@ -291,20 +397,28 @@ tree := rules.Root(
 )
 ```
 
+Note that `Root()` creates an `AnyOfNode`: at least one immediate child must
+succeed for the tree to pass, and an empty `Root()` returns success.
+
 ### Cross-package tree composition
 
-Build rules in separate packages and merge at runtime:
+Build rules in separate packages and merge them at runtime:
 
 ```go
 // package userrules
-type User struct { Name string; Age int }
+type User struct {
+    Name string
+    Age  int
+}
 
 func UserRules() rules.Evaluable {
     return rules.Node(
         rules.FastIsA[User]("isUser"),
         rules.Rules(
             rules.NewTypedRule[User]("checkAge", func(ctx context.Context, u User) error {
-                if u.Age < 18 { return fmt.Errorf("too young") }
+                if u.Age < 18 {
+                    return fmt.Errorf("too young")
+                }
                 return nil
             }),
         ),
@@ -312,14 +426,19 @@ func UserRules() rules.Evaluable {
 }
 
 // package productrules
-type Product struct { Name string; Price float64 }
+type Product struct {
+    Name  string
+    Price float64
+}
 
 func ProductRules() rules.Evaluable {
     return rules.Node(
         rules.FastIsA[Product]("isProduct"),
         rules.Rules(
             rules.NewTypedRule[Product]("checkPrice", func(ctx context.Context, p Product) error {
-                if p.Price <= 0 { return fmt.Errorf("invalid price") }
+                if p.Price <= 0 {
+                    return fmt.Errorf("invalid price")
+                }
                 return nil
             }),
         ),
@@ -336,17 +455,15 @@ rules.ValidateWithData(ctx, mergedTree, hooks, "validate", user)
 rules.ValidateWithData(ctx, mergedTree, hooks, "validate", product)
 ```
 
----
-
-## Runtime Type Conditions
+## Runtime type conditions
 
 ```go
-rules.FastIsA[User]("isUser")               // Exact type match (generics, fastest)
-rules.IsA[User]("isUser")                   // Exact type match (reflection, ~6ns)
-rules.IsAssignableTo[Named]("isNamed")      // Interface implementation
-rules.IsNil("isNil")                        // Nil check
-rules.IsNotNil("hasData")                   // Non-nil check
-rules.HasField("hasEmail", "Email")         // Struct field or map key exists
+rules.FastIsA[User]("isUser")                 // Exact type match (generics, fastest)
+rules.IsA[User]("isUser")                     // Exact type match (reflection, ~7ns)
+rules.IsAssignableTo[Named]("isNamed")        // Interface implementation
+rules.IsNil("isNil")                          // Nil check
+rules.IsNotNil("hasData")                     // Non-nil check
+rules.HasField("hasEmail", "Email")           // Struct field or map key exists
 rules.FieldEquals("isAdmin", "Role", "admin") // Struct field or map key equals value
 ```
 
@@ -355,14 +472,14 @@ rules.FieldEquals("isAdmin", "Role", "admin") // Struct field or map key equals 
 ```go
 condition := rules.NewCondition("isAdult", func(ctx context.Context) bool {
     user, ok := rules.GetAs[User](ctx)
-    if !ok { return false }
+    if !ok {
+        return false
+    }
     return user.Age >= 18
 })
 ```
 
----
-
-## Common Validators
+## Common validators
 
 | Function | What it validates |
 |----------|-------------------|
@@ -382,13 +499,15 @@ condition := rules.NewCondition("isAdult", func(ctx context.Context) bool {
 | `NewRuleContentType(name, reader, allowedMIMEs)` | MIME content type detection |
 | `ValidateIPv4Address(value)` / `ValidateIPv6Address(value)` / `ValidateIPv46Address(value)` | Legacy IP validators (aliases above) |
 
-> 💡 Validators without a `name` parameter return errors with an empty `Field`. Validators with `name` fill the `Field` field in `rules.Error` for structured error reporting.
+**Field names.** Validators without a `name` parameter return errors with an
+empty `Field`. Validators with `name` fill the `Field` field in `rules.Error`
+for structured error reporting.
 
-> 💡 **Empty values are valid by convention.** All validators (e.g. `Email`, `URL`) treat an empty string as valid — they check *format*, not *presence*. If a field is required, add a separate presence check.
+**Empty values are valid by convention.** All validators (for example `Email`
+and `URL`) treat an empty string as valid — they check *format*, not
+*presence*. If a field is required, add a separate presence check.
 
----
-
-## Full Example: User Registration
+## Full example: user registration
 
 ```go
 package main
@@ -450,9 +569,7 @@ func main() {
 }
 ```
 
----
-
-## Key Metric Indicators (KMIs)
+## Key metric indicators (KMIs)
 
 The same tree engine also computes key metric indicators dynamically. Instead
 of only returning pass/fail, a rule can **carry metric outcomes** — counters,
@@ -478,7 +595,9 @@ tree := rules.Root(
         rules.NewTypedMetricRule[User]("latency", rules.KindHistogram, "latency_ms",
             func(ctx context.Context, u User) (rules.Outcome, error) {
                 hist := rules.NewHistogram([]float64{50, 100, 250, 1000, math.Inf(1)})
-                for _, v := range u.Latencies { hist.Observe(v) }
+                for _, v := range u.Latencies {
+                    hist.Observe(v)
+                }
                 return rules.HistogramValue(hist), nil
             }),
         rules.NewTypedMetricRule[User]("compliant", rules.KindValid, "compliant",
@@ -495,10 +614,10 @@ report, err := rules.EvaluateMetricsWithData(ctx, tree, hooks, "health", user)
 
 A metric-carrying rule returns both an `Outcome` and an `error`, so a single
 rule both computes the KMI and decides pass/fail. A rule that fails still
-reports its observation (e.g. counting attempts), and the error is surfaced
-in `report.Errors`.
+reports its observation (for example, counting attempts), and the error is
+surfaced in `report.Errors`.
 
-**Extending any rule:** any `Rule` can carry metrics by calling `rules.Emit`
+**Extending any rule.** Any `Rule` can carry metrics by calling `rules.Emit`
 from its `Validate` method — no dedicated constructor needed:
 
 ```go
@@ -508,259 +627,21 @@ rule := rules.NewTypedRule[User]("itemsInOrder", func(ctx context.Context, u Use
 })
 ```
 
-**Aggregation:** same-name outcomes are combined when the report is built.
+**Aggregation.** Same-name outcomes are combined when the report is built.
 Defaults are kind-specific — counters sum, histograms merge bucket-wise,
 scores weight-average — and can be overridden via the `Aggregation` field on
 `Outcome`.
 
-**Batching:** the `Prepare` step of `NewTypedMetricRuleWithPrepare` runs in
-the same rule-prepare phase, so a dataloader batches metric fetches together
-with rule and condition fetches in a single round-trip. Outcomes are only
-collected by `EvaluateMetrics`; `Validate` ignores them, so validation-only
-callers are unaffected.
+**Batching.** The `Prepare` step of `NewTypedMetricRuleWithPrepare` runs in the
+same rule-prepare phase, so a dataloader batches metric fetches together with
+rule and condition fetches in a single round-trip. Outcomes are only collected
+by `EvaluateMetrics`; `Validate` ignores them, so validation-only callers are
+unaffected.
 
----
+## Error handling
 
-## API Reference
-
-### Core Interfaces
-
-| Interface | Purpose |
-|-----------|---------|
-| `Rule` | Single validation unit (`Prepare`, `Validate`, `Name`) |
-| `Condition` | Boolean check controlling if child rules run (`Prepare`, `IsValid`, `Name`, `IsPure`) |
-| `Evaluable` | Tree component that can be evaluated (`PrepareConditions`, `Evaluate`) |
-
-### Tree Building Functions
-
-| Function | Returns | What it does |
-|----------|---------|--------------|
-| `rules.Root(children...)` | `Evaluable` | Top-level container (AnyOf) — passes if **any** child passes |
-| `rules.Node(condition, children...)` | `Evaluable` | Runs children **only if** condition is true |
-| `rules.Either(condition, left, right)` | `Evaluable` | If-else: left if true, right if false |
-| `rules.Rules(rules...)` | `Evaluable` | Leaf node — **all** rules must pass |
-| `rules.AllOf(children...)` | `Evaluable` | Logical AND — **all** children must succeed |
-| `rules.AnyOf(children...)` | `Evaluable` | Logical OR — **at least one** child must succeed |
-| `rules.Not(condition)` | `Condition` | Negate a condition |
-| `rules.Or(rule, rules...)` | `Rule` | Rule-level OR (use inside `Rules()`) |
-| `rules.NewChainRules(rules...)` | `Rule` | Sequential rules (stop on first error, use inside `Rules()`) |
-
-### Data Registry Functions
-
-| Function | What it does |
-|----------|--------------|
-| `rules.NewDataRegistry(data)` | Creates a registry with validation data |
-| `rules.WithRegistry(ctx, reg)` | Attaches registry to context |
-| `rules.ValidateWithData(ctx, tree, hooks, name, data)` | Validates with data (convenience) |
-| `rules.Validate(ctx, tree, hooks, name)` | Validates using registry already in context |
-| `rules.ValidateMulti(ctx, targets, hooks, name)` | Batch validation of multiple targets |
-| `rules.ValidateMultiWithData(ctx, targets, hooks, name, ...data)` | Batch validation with data |
-| `rules.EvaluateMetrics(ctx, tree, hooks, name)` | Evaluates tree, returns `(Report, error)` with aggregated metrics |
-| `rules.EvaluateMetricsWithData(ctx, tree, hooks, name, data)` | Evaluates with data (convenience) |
-| `rules.EvaluateMetricsMulti(ctx, targets, hooks, name)` | Batch evaluation, one `Report` per target |
-| `rules.EvaluateMetricsMultiWithData(ctx, targets, hooks, name, ...data)` | Batch evaluation with data |
-| `rules.Get(ctx)` | Gets raw data from context |
-| `rules.GetAs[T](ctx)` | Gets typed data from context |
-| `rules.TypeOf(ctx)` | Returns `reflect.Type` of data in context |
-| `rules.IsType(ctx, type)` | Checks if data is exactly given type |
-
-### Rule Constructors
-
-| Function | Description |
-|----------|-------------|
-| `rules.NewRule(name, fn)` | Rule with `any` data parameter (pure) |
-| `rules.NewTypedRule[T](name, fn)` | Type-safe rule (pure) |
-| `rules.NewTypedRuleWithPrepare[In, T](name, prepare, validate)` | Type-safe rule with Prepare (impure) |
-| `rules.NewRulePure(name, fn)` | Closure-based rule (pure, legacy) |
-
-### Metric-Carrying Rules
-
-| Function | Description |
-|----------|-------------|
-| `rules.NewMetricRulePure(name, kind, field, fn)` | Closure-based rule carrying a metric (pure, legacy) |
-| `rules.NewMetricRule(name, kind, field, fn)` | Rule carrying a metric with `any` data (pure) |
-| `rules.NewTypedMetricRule[T](name, kind, field, fn)` | Type-safe rule carrying a metric (pure) |
-| `rules.NewTypedMetricRuleWithPrepare[In, T](name, kind, field, prepare, fn)` | Type-safe rule carrying a metric with Prepare (impure) |
-| `rules.Emit(ctx, outcome)` | Record a metric outcome from any rule's `Validate` |
-| `rules.CounterValue(v)` | Build a counter `Outcome` |
-| `rules.ScoreValue(score, weight)` | Build a score `Outcome` |
-| `rules.HistogramValue(h)` | Build a histogram `Outcome` |
-| `rules.ValidValue(valid, err)` | Build a valid/invalid `Outcome` |
-| `rules.NewHistogram(buckets)` | Create an empty histogram with le boundaries |
-
-`Kind` values: `KindValid`, `KindCounter`, `KindHistogram`, `KindScore`. Outcomes are aggregated by name in the returned `Report.Metrics`; see [Key Metric Indicators](#key-metric-indicators-kmis).
-
-### Condition Constructors
-
-| Function | Description |
-|----------|-------------|
-| `rules.NewCondition(name, fn)` | Data-driven condition (pure) |
-| `rules.NewConditionSideEffect[T](name, prepare, condition)` | Condition with side effects (impure), typed loaded data |
-| `rules.NewTypedCondition[T](name, fn)` | Type-safe condition (pure) |
-| `rules.NewTypedConditionWithPrepare[In, T](name, prepare, condition)` | Type-safe condition with Prepare (impure) |
-| `rules.NewConditionPure(name, fn)` | Closure-based condition (pure, legacy) |
-
-### Runtime Type Conditions
-
-| Function | What it does |
-|----------|--------------|
-| `rules.IsA[T]("name")` | True if data is exactly type T (reflection, ~6ns) |
-| `rules.FastIsA[T]("name")` | Type assertion (~1-2ns), faster |
-| `rules.FastTypeSwitch("name", fn)` | Type check using type switch (flexible, fast) |
-| `rules.IsAssignableTo[T]("name")` | True if data can be assigned to T |
-| `rules.IsNil("name")` | True if data is nil |
-| `rules.IsNotNil("name")` | True if data is not nil |
-| `rules.HasField("name", "fieldName")` | True if data has struct field or map key |
-| `rules.FieldEquals("name", "fieldName", value)` | True if struct field/map key equals value |
-
-### Creating Custom Rules (Data Registry)
-
-**Basic rule (typed):**
-
-```go
-myRule := rules.NewTypedRule[User]("myRule", func(ctx context.Context, user User) error {
-    if user.Disabled {
-        return fmt.Errorf("user is disabled")
-    }
-    return nil
-})
-```
-
-**Type-safe rule:**
-
-```go
-myRule := rules.NewTypedRule("myRule", func(ctx context.Context, user User) error {
-    if user.Disabled {
-        return fmt.Errorf("user is disabled")
-    }
-    return nil
-})
-```
-
-**Type-safe rule with Prepare (impure):**
-
-Use this for side effects before validation (database checks, API calls):
-
-```go
-myRule := rules.NewTypedRuleWithPrepare(
-    "checkEmailUnique",
-    func(ctx context.Context, user User) (StoredData, error) {
-        return db.EmailData(ctx, user.Email)
-    },
-    func(ctx context.Context, user User, data StoredData) error {
-        if !strings.Contains(user.Email, "@") {
-            return fmt.Errorf("invalid email format")
-        }
-        if data.Exists {
-            return fmt.Errorf("email already in use")
-        }
-        return nil
-    },
-)
-```
-
-✅ **Concurrency:** rules and conditions never store prepared state — `Prepare` records its retrieved data in a per-evaluation preparedStore (keyed by the rule/condition instance), and `Validate`/`IsValid` read it back typed via `GetPreparedAs[T]`. Every tree, including ones built with `NewTypedRuleWithPrepare` and `NewTypedConditionWithPrepare`, is **safe to share across goroutines**. Build the tree once and validate many targets concurrently:
-
-```go
-// ✅ Correct: One tree, many targets concurrently
-tree := buildTree()
-for _, user := range users {
-    go func(u User) {
-        err := rules.ValidateWithData(ctx, tree, hooks, "validate", u) // safe
-    }(user)
-}
-```
-
-**Chained rules (sequential, stop on first error):**
-
-```go
-validationChain := rules.NewChainRules(
-    validators.Email("email", req.Email, nil),
-    validators.MinValue("age", req.Age, 13),
-)
-```
-
-### Creating Custom Conditions (Data Registry)
-
-**Data-driven condition:**
-
-```go
-myCondition := rules.NewCondition("isAdmin", func(ctx context.Context) bool {
-    user, ok := rules.GetAs[User](ctx)
-    if !ok { return false }
-    return user.Role == "admin"
-})
-```
-
-**Type-safe condition:**
-
-```go
-myCondition := rules.NewTypedCondition("isAdult", func(ctx context.Context, user User) bool {
-    return user.Age >= 18
-})
-```
-
-**Type-safe condition with Prepare (impure):**
-
-```go
-myCondition := rules.NewTypedConditionWithPrepare(
-    "userHasPermission",
-    func(ctx context.Context, user User) (Permissions, error) {
-        return db.LoadPermissions(ctx, user.ID)
-    },
-    func(ctx context.Context, user User, perms Permissions) bool {
-        return perms.CanEdit
-    },
-)
-```
-
-### Closure-Based (Legacy)
-
-**Pure rule:**
-
-```go
-myRule := rules.NewRulePure("myRule", func() error {
-    if user.Disabled {
-        return fmt.Errorf("user is disabled")
-    }
-    return nil
-})
-```
-
-**Pure condition:**
-
-```go
-myCondition := rules.NewConditionPure("isAdmin", func() bool {
-    return user.Role == "admin"
-})
-```
-
-**Impure condition (with Prepare):**
-
-```go
-var user User
-
-tree := rules.Node(
-    rules.NewConditionSideEffect[User](
-        "userActive",
-        func(ctx context.Context) (User, error) {
-            return db.GetUser(ctx, userID)
-        },
-        func(ctx context.Context, user User) bool {
-            return user.Active
-        },
-    ),
-    rules.Rules(validators.Email("email", user.Email, nil)),
-)
-```
-
-The `IsPure()` method controls optimization:
-- `true` — no side effects, engine may skip `Prepare()`
-- `false` — has side effects, `Prepare()` always called before `IsValid()`
-
-### Error Handling
-
-All errors in this library are structured as `rules.Error`, which implements the standard `error` interface:
+All errors in this library are structured as `rules.Error`, which implements
+the standard `error` interface:
 
 ```go
 type Error struct {
@@ -799,14 +680,19 @@ if err != nil {
 | `INVALID_URL_FORMAT`, `URL_SCHEME_NOT_ALLOWED` | `URL` |
 | `INVALID_IPV4_ADDRESS`, `INVALID_IPV6_ADDRESS`, `INVALID_IP_ADDRESS` | `IPv4Address`, `IPv6Address`, `IPv46Address` |
 | `FILE_EXTENSION_NOT_ALLOWED` | `FileExtensionValidator` |
-| `CONTENT_TYPE_EMPTY_FILE`, `CONTENT_TYPE_MISMATCH` | `NewRuleContentType` |
+| `CONTENT_TYPE_EMPTY_FILE`, `CONTENT_TYPE_READ_ERROR`, `CONTENT_TYPE_MISMATCH` | `NewRuleContentType` |
 | `NULL_CHARACTERS_FOUND` | `ProhibitNullCharacters` |
 | `STEP_VALUE_ZERO`, `STEP_VALUE_INVALID` | `StepValue` |
-| `TYPE_MISMATCH`, `DATA_NOT_FOUND`, `RULE_FUNC_NIL` | Core engine |
+| `TYPE_MISMATCH`, `DATA_NOT_PREPARED`, `RULE_FUNC_NIL` | Core engine |
 
----
+**Return `rules.Error` by value, not by pointer.** Callers assert
+`err.(rules.Error)`; a `*rules.Error` return silently fails that type
+assertion and can mask test failures.
 
-## Batch Validation
+## Batch validation
+
+`ValidateMultiWithData` validates many targets at once, coalescing all
+dataloader fetches for the entire batch:
 
 ```go
 targets := make([]rules.TreeAndData, len(items))
@@ -816,13 +702,15 @@ for i, item := range items {
 err := rules.ValidateMultiWithData(ctx, targets, hooks, "batch")
 ```
 
-Across the batch, all targets' conditions are prepared before any rule preparation, so dataloader fetches for the entire batch can be coalesced.
+Across the batch, all targets' conditions are prepared before any rule
+preparation, so dataloader fetches for the entire batch can be coalesced. If
+your targets carry per-target contexts, build them with `rules.NewTarget(ctx,
+tree)` and pass the resulting slice to `ValidateMulti`.
 
----
+## Execution path tracing
 
-## Execution Path Tracing
-
-For debugging and logging, you can record the path each rule took through the tree. Tracing is opt-in and race-free — rules are never mutated during evaluation:
+For debugging and logging, record the path each rule took through the tree.
+Tracing is opt-in and race-free — rules are never mutated during evaluation:
 
 ```go
 ctx, trace := rules.WithExecutionTrace(ctx)
@@ -832,26 +720,57 @@ fmt.Println(trace.Path(rule))
 // "validate -> root -> isPremium -> leafNode -> checkAge"
 ```
 
----
+## Concurrency and reuse
+
+**All rules and conditions are stateless and safe to share across
+goroutines.** `Prepare(ctx)` retrieves data and records it in a per-evaluation
+prepared store (created once per validation run), keyed by the rule or
+condition instance. The rule or condition reads that data back typed in
+`Validate` / `IsValid` via `GetPreparedAs[T]`. Because prepared data travels in
+the context — never on the rule or condition — a tree built once (including
+trees built with `NewTypedRuleWithPrepare`, `NewTypedMetricRuleWithPrepare`,
+and `NewTypedConditionWithPrepare`) can be validated concurrently against many
+targets:
+
+```go
+// One tree, many targets, concurrent validation — safe
+tree := buildTree()
+for _, user := range users {
+    go func(u User) {
+        err := rules.ValidateWithData(ctx, tree, hooks, "validate", u)
+    }(user)
+}
+```
+
+The one caveat: do not share a single **context** (which carries the registry
+and the per-evaluation store) across goroutines. Create one context per target
+— `ValidateWithData`, `ValidateMultiWithData`, `EvaluateMetricsWithData`, and
+friends do this for you.
 
 ## Performance
 
 | Operation | Speed | Allocations |
 |-----------|-------|-------------|
-| `IsA[T]()` type check | ~6-7 ns/op | 0 |
-| `GetAs[T]()` data access | ~6-7 ns/op | 0 |
-| Full tree evaluation | ~500-1000 ns/op | ~10-17 |
+| `IsA[T]()` type check | ~7 ns/op | 0 |
+| `FastIsA[T]()` type check | ~7 ns/op | 0 |
+| `FastTypeSwitch` type check | ~8 ns/op | 0 |
+| `GetAs[T]()` data access | ~6 ns/op | 0 |
+| Full tree evaluation | ~500–1000 ns/op | ~10–17 |
 
-For high-throughput scenarios (1000s of evaluations/sec):
+For high-throughput scenarios (thousands of evaluations per second):
 
-1. **`IsA[T]()` is fast** — caches the target type; reflection overhead is negligible (~6ns)
-2. **Use `ValidateMultiWithData`** — Batch validations to amortize context creation cost
-3. **Avoid deep nesting** — Each level adds overhead; flatten where possible
-4. **Cache pure trees** — Trees with only pure rules/conditions (`RuleDataFunc`, `ConditionFunc`, `RulePure`) can be safely cached globally. Trees with `TypedRuleDataFunc` or `TypedConditionWithPrepare` must be created per-goroutine.
+1. **Type checks are cheap** — `IsA[T]()` caches the target type; reflection
+   overhead is negligible (~7 ns).
+2. **Use `ValidateMultiWithData`** — batch validations to amortize
+   context-creation cost.
+3. **Avoid deep nesting** — each level adds overhead; flatten where possible.
+4. **Cache trees globally** — because every rule and condition is stateless,
+   any tree can be built once and reused (even concurrently) across requests.
 
-See [PERFORMANCE.md](PERFORMANCE.md) for detailed benchmarks and optimization guides.
+See [PERFORMANCE.md](PERFORMANCE.md) for detailed benchmarks and optimization
+guides.
 
-### Fast Type Switching
+### Fast type switching
 
 ```go
 condition := rules.FastTypeSwitch("isValid", func(data any) bool {
@@ -864,32 +783,263 @@ condition := rules.FastTypeSwitch("isValid", func(data any) bool {
 })
 ```
 
----
+## API reference
 
-## Installation
+### Core interfaces
 
-```bash
-go get github.com/mishudark/rules
+| Interface | Purpose |
+|-----------|---------|
+| `Rule` | Single validation unit (`Prepare`, `Validate`, `Name`) |
+| `Condition` | Boolean check controlling if child rules run (`Prepare`, `IsValid`, `Name`, `IsPure`) |
+| `Evaluable` | Tree component that can be evaluated (`PrepareConditions`, `Evaluate`) |
+
+### Tree building functions
+
+| Function | Returns | What it does |
+|----------|---------|--------------|
+| `rules.Root(children...)` | `Evaluable` | Top-level container (AnyOf) — passes if **any** child passes |
+| `rules.Node(condition, children...)` | `Evaluable` | Runs children **only if** condition is true |
+| `rules.Either(condition, left, right)` | `Evaluable` | If-else: left if true, right if false |
+| `rules.Rules(rules...)` | `Evaluable` | Leaf node — **all** rules must pass |
+| `rules.AllOf(children...)` | `Evaluable` | Logical AND — **all** children must succeed |
+| `rules.AnyOf(children...)` | `Evaluable` | Logical OR — **at least one** child must succeed |
+| `rules.Not(condition)` | `Condition` | Negate a condition |
+| `rules.Or(rule, rules...)` | `Rule` | Rule-level OR (use inside `Rules()`) |
+| `rules.NewChainRules(rules...)` | `Rule` | Sequential rules (stop on first error, use inside `Rules()`) |
+
+### Data registry functions
+
+| Function | What it does |
+|----------|--------------|
+| `rules.NewDataRegistry(data)` | Creates a registry with validation data |
+| `rules.WithRegistry(ctx, reg)` | Attaches registry to context |
+| `rules.ValidateWithData(ctx, tree, hooks, name, data)` | Validates with data (convenience) |
+| `rules.Validate(ctx, tree, hooks, name)` | Validates using registry already in context |
+| `rules.NewTarget(ctx, tree)` | Builds a batch target from context + tree |
+| `rules.ValidateMulti(ctx, targets, hooks, name)` | Batch validation of multiple targets |
+| `rules.ValidateMultiWithData(ctx, targets, hooks, name, ...data)` | Batch validation with data |
+| `rules.EvaluateMetrics(ctx, tree, hooks, name)` | Evaluates tree, returns `(Report, error)` with aggregated metrics |
+| `rules.EvaluateMetricsWithData(ctx, tree, hooks, name, data)` | Evaluates with data (convenience) |
+| `rules.EvaluateMetricsMulti(ctx, targets, hooks, name)` | Batch evaluation, one `Report` per target |
+| `rules.EvaluateMetricsMultiWithData(ctx, targets, hooks, name, ...data)` | Batch evaluation with data |
+| `rules.Get(ctx)` | Gets raw data from context |
+| `rules.GetAs[T](ctx)` | Gets typed data from context |
+| `rules.TypeOf(ctx)` | Returns `reflect.Type` of data in context |
+| `rules.IsType(ctx, type)` | Checks if data is exactly given type |
+
+### Rule constructors
+
+| Function | Description |
+|----------|-------------|
+| `rules.NewTypedRule[T](name, fn)` | Type-safe rule (pure) |
+| `rules.NewTypedRuleWithPrepare[In, T](name, prepare, validate)` | Type-safe rule with Prepare (impure) |
+| `rules.NewRulePure(name, fn)` | Closure-based rule (pure, legacy) |
+
+### Metric-carrying rules
+
+| Function | Description |
+|----------|-------------|
+| `rules.NewMetricRulePure(name, kind, field, fn)` | Closure-based rule carrying a metric (pure, legacy) |
+| `rules.NewTypedMetricRule[T](name, kind, field, fn)` | Type-safe rule carrying a metric (pure) |
+| `rules.NewTypedMetricRuleWithPrepare[In, T](name, kind, field, prepare, fn)` | Type-safe rule carrying a metric with Prepare (impure) |
+| `rules.Emit(ctx, outcome)` | Record a metric outcome from any rule's `Validate` |
+| `rules.CounterValue(v)` | Build a counter `Outcome` |
+| `rules.ScoreValue(score, weight)` | Build a score `Outcome` |
+| `rules.HistogramValue(h)` | Build a histogram `Outcome` |
+| `rules.ValidValue(valid, err)` | Build a valid/invalid `Outcome` |
+| `rules.NewHistogram(buckets)` | Create an empty histogram with `le` boundaries |
+
+`Kind` values: `KindValid`, `KindCounter`, `KindHistogram`, `KindScore`.
+Outcomes are aggregated by name in the returned `Report.Metrics`; see
+[Key metric indicators](#key-metric-indicators-kmis).
+
+### Condition constructors
+
+| Function | Description |
+|----------|-------------|
+| `rules.NewCondition(name, fn)` | Data-driven condition (pure) |
+| `rules.NewConditionSideEffect[T](name, prepare, condition)` | Condition with side effects (impure), typed loaded data |
+| `rules.NewTypedCondition[T](name, fn)` | Type-safe condition (pure) |
+| `rules.NewTypedConditionWithPrepare[In, T](name, prepare, condition)` | Type-safe condition with Prepare (impure) |
+| `rules.NewConditionPure(name, fn)` | Closure-based condition (pure, legacy) |
+
+### Runtime type conditions
+
+| Function | What it does |
+|----------|--------------|
+| `rules.IsA[T]("name")` | True if data is exactly type T (reflection, ~7 ns) |
+| `rules.FastIsA[T]("name")` | True if data is exactly type T (type assertion) |
+| `rules.FastTypeSwitch("name", fn)` | Type check using a type switch (flexible, fast) |
+| `rules.IsAssignableTo[T]("name")` | True if data can be assigned to T |
+| `rules.IsNil("name")` | True if data is nil |
+| `rules.IsNotNil("name")` | True if data is not nil |
+| `rules.HasField("name", "fieldName")` | True if data has struct field or map key |
+| `rules.FieldEquals("name", "fieldName", value)` | True if struct field/map key equals value |
+
+### Custom rules (data registry pattern)
+
+**Typed rule:**
+
+```go
+myRule := rules.NewTypedRule[User]("myRule", func(ctx context.Context, user User) error {
+    if user.Disabled {
+        return fmt.Errorf("user is disabled")
+    }
+    return nil
+})
 ```
 
-Requires Go **1.26+**.
+**Typed rule with Prepare (impure):**
 
----
+Use this for side effects before validation (database checks, API calls):
 
-## Best Practices
+```go
+myRule := rules.NewTypedRuleWithPrepare(
+    "checkEmailUnique",
+    func(ctx context.Context, user User) (StoredData, error) {
+        return db.EmailData(ctx, user.Email)
+    },
+    func(ctx context.Context, user User, data StoredData) error {
+        if !strings.Contains(user.Email, "@") {
+            return fmt.Errorf("invalid email format")
+        }
+        if data.Exists {
+            return fmt.Errorf("email already in use")
+        }
+        return nil
+    },
+)
+```
 
-1. **Use Data Registry for reusable trees** — Build trees once with `NewRule`, `NewTypedRule`, reuse with `ValidateWithData`.
+**Chained rules (sequential, stop on first error):**
 
-2. **Use closures for one-off validations** — For simple, single-use validations, `NewRulePure` and `NewConditionPure` are fine.
+```go
+validationChain := rules.NewChainRules(
+    validators.Email("email", req.Email, nil),
+    validators.MinValue("age", req.Age, 13),
+)
+```
 
-3. **Use `FastIsA[T]` for type switching** — Merging trees from different packages? Use `FastIsA[YourType]("isYourType")`.
+### Custom conditions (data registry pattern)
 
-4. **Prefer type-safe rules** — `NewTypedRule[T]` gives compile-time type safety within the rule function.
+**Data-driven condition:**
 
-5. **Use `ChainRules` for sequential checks** — When rules must run in order (stop on first error), use `ChainRules` instead of manual chaining.
+```go
+myCondition := rules.NewCondition("isAdmin", func(ctx context.Context) bool {
+    user, ok := rules.GetAs[User](ctx)
+    if !ok {
+        return false
+    }
+    return user.Role == "admin"
+})
+```
 
-6. **Know the difference: `Or` vs `AnyOf`** — `Or(rule, ...)` creates a `Rule` (use inside `Rules()`), while `AnyOf(children...)` creates an `Evaluable` (use as a tree node).
+**Type-safe condition:**
 
-7. **Share trees freely, even across goroutines** — rules and conditions hold no mutable state: `Prepare` records its retrieved data in the per-evaluation preparedStore (keyed by the rule/condition instance), and `Validate`/`IsValid` read it back typed via `GetPreparedAs[T]`. A tree built once (including `NewTypedRuleWithPrepare` and `NewTypedConditionWithPrepare`) can be validated concurrently against different targets. Cache trees globally.
+```go
+myCondition := rules.NewTypedCondition("isAdult", func(ctx context.Context, user User) bool {
+    return user.Age >= 18
+})
+```
 
-8. **Inject, don't store** — `Prepare(ctx) (any, error)` retrieves the data and records it in the per-evaluation preparedStore (via `rules.PutPrepared`); `Validate(ctx)` / `IsValid(ctx)` read it back typed via `rules.GetPreparedAs[T](ctx, r)`. Never cache prepared data on the rule or condition: that is what made trees unsafe to share, and it defeats the dataloader fan-out (a dataloader batches every Prepare call across the whole tree and across targets in `ValidateMulti`).
+**Type-safe condition with Prepare (impure):**
+
+```go
+myCondition := rules.NewTypedConditionWithPrepare(
+    "userHasPermission",
+    func(ctx context.Context, user User) (Permissions, error) {
+        return db.LoadPermissions(ctx, user.ID)
+    },
+    func(ctx context.Context, user User, perms Permissions) bool {
+        return perms.CanEdit
+    },
+)
+```
+
+### Closure-based rules and conditions (legacy)
+
+Closure-based components bind data at construction time. They are convenient
+for one-off validations but are not reusable across data instances.
+
+**Pure rule:**
+
+```go
+myRule := rules.NewRulePure("myRule", func() error {
+    if user.Disabled {
+        return fmt.Errorf("user is disabled")
+    }
+    return nil
+})
+```
+
+**Pure condition:**
+
+```go
+myCondition := rules.NewConditionPure("isAdmin", func() bool {
+    return user.Role == "admin"
+})
+```
+
+**Impure condition (with Prepare):**
+
+```go
+tree := rules.Node(
+    rules.NewConditionSideEffect[User](
+        "userActive",
+        func(ctx context.Context) (User, error) {
+            return db.GetUser(ctx, userID)
+        },
+        func(ctx context.Context, user User) bool {
+            return user.Active
+        },
+    ),
+    rules.Rules(validators.Email("email", user.Email, nil)),
+)
+```
+
+The `IsPure()` method controls optimization:
+
+- `true` — no side effects, the engine may skip `Prepare()`.
+- `false` — has side effects, `Prepare()` is always called before `IsValid()`.
+
+## Best practices
+
+1. **Use the data registry pattern for reusable trees** — build once with
+   `NewTypedRule` and `NewTypedCondition`, reuse with `ValidateWithData`.
+
+2. **Use closures for one-off validations** — for simple, single-use
+   validations, `NewRulePure` and `NewConditionPure` are fine.
+
+3. **Use `FastIsA[T]` for type switching** — merging trees from different
+   packages? Use `FastIsA[YourType]("isYourType")`.
+
+4. **Prefer type-safe rules** — `NewTypedRule[T]` gives compile-time type
+   safety within the rule function.
+
+5. **Use `ChainRules` for sequential checks** — when rules must run in order
+   (stop on first error), use `NewChainRules` instead of manual chaining.
+
+6. **Know the difference: `Or` vs `AnyOf`** — `Or(rule, ...)` creates a `Rule`
+   (use inside `Rules()`), while `AnyOf(children...)` creates an `Evaluable`
+   (use as a tree node).
+
+7. **Share trees freely, even across goroutines** — rules and conditions hold
+   no mutable state: `Prepare` records its retrieved data in the
+   per-evaluation prepared store (keyed by the rule or condition instance), and
+   `Validate` / `IsValid` read it back typed via `GetPreparedAs[T]`. Cache
+   trees globally.
+
+8. **Inject, don't store** — `Prepare(ctx) (any, error)` retrieves the data and
+   records it in the per-evaluation prepared store; `Validate(ctx)` /
+   `IsValid(ctx)` read it back typed via `GetPreparedAs[T](ctx, r)`. Never
+   cache prepared data on the rule or condition: that is what made trees unsafe
+   to share, and it defeats the dataloader fan-out (a dataloader batches every
+   `Prepare` call across the whole tree and across targets in
+   `ValidateMulti`).
+
+## Learn more
+
+- [PERFORMANCE.md](PERFORMANCE.md) — detailed benchmarks and optimization strategies.
+- [AGENTS.md](AGENTS.md) — architecture notes for contributors, including the
+  two-phase prepare/evaluate design and the dataloader batching invariant.
+- [pkg.go.dev](https://pkg.go.dev/github.com/mishudark/rules) — full package documentation.
