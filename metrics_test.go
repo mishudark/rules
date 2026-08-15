@@ -193,7 +193,7 @@ func TestEvaluateMetrics_CustomRuleEmitsMetrics(t *testing.T) {
 	// The "extend a rule" path: any rule can carry metrics by calling Emit.
 	// Two same-name outcomes with AggMax combine to the largest value.
 	maxEmit := func(name string, value float64) Rule {
-		return NewTypedRule[string](name, func(ctx context.Context, _ string) error {
+		return NewTypedRule(name, func(ctx context.Context, _ string) error {
 			o := CounterValue(value)
 			o.Name = name
 			o.Aggregation = AggMax
@@ -388,17 +388,17 @@ func TestEvaluateMetrics_Either(t *testing.T) {
 func TestEvaluateMetrics_MixedTree(t *testing.T) {
 	t.Parallel()
 
-	failRule := NewTypedRule[metricUser]("mustFail", func(ctx context.Context, _ metricUser) error {
+	failRule := NewTypedRule("mustFail", func(ctx context.Context, _ metricUser) error {
 		return Error{Field: "x", Err: "boom", Code: "BOOM"}
 	})
 
 	tree := Root(
 		Rules(failRule),
 		Rules(
-			NewTypedMetricRule[metricUser]("balance", KindCounter, "balance", func(ctx context.Context, u metricUser) (Outcome, error) {
+			NewTypedMetricRule("balance", KindCounter, "balance", func(ctx context.Context, u metricUser) (Outcome, error) {
 				return CounterValue(u.Balance), nil
 			}),
-			NewTypedMetricRule[metricUser]("score", KindScore, "score", func(ctx context.Context, u metricUser) (Outcome, error) {
+			NewTypedMetricRule("score", KindScore, "score", func(ctx context.Context, u metricUser) (Outcome, error) {
 				return ScoreValue(u.Balance/10, 1), nil
 			}),
 		),
@@ -427,7 +427,7 @@ func TestEvaluateMetrics_MetricRuleWithPrepare(t *testing.T) {
 
 	prepared := false
 
-	rule := NewTypedMetricRuleWithPrepare[metricUser, float64](
+	rule := NewTypedMetricRuleWithPrepare[metricUser](
 		"engagement", KindScore, "engagement",
 		func(ctx context.Context, u metricUser) (float64, error) {
 			prepared = true
@@ -489,7 +489,7 @@ func TestEvaluateMetricsMulti(t *testing.T) {
 	t.Parallel()
 
 	tree := Rules(
-		NewTypedMetricRule[metricUser]("balance", KindCounter, "balance", func(ctx context.Context, u metricUser) (Outcome, error) {
+		NewTypedMetricRule("balance", KindCounter, "balance", func(ctx context.Context, u metricUser) (Outcome, error) {
 			return CounterValue(u.Balance), nil
 		}),
 	)
@@ -540,7 +540,7 @@ func TestEvaluateMetrics_Concurrent(t *testing.T) {
 	// outcome collector is a per-evaluation side channel and rules are never
 	// mutated.
 	tree := Rules(
-		NewTypedMetricRule[metricUser]("balance", KindCounter, "balance", func(ctx context.Context, u metricUser) (Outcome, error) {
+		NewTypedMetricRule("balance", KindCounter, "balance", func(ctx context.Context, u metricUser) (Outcome, error) {
 			return CounterValue(u.Balance), nil
 		}),
 	)

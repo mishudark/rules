@@ -194,11 +194,10 @@ func (n *ConditionNode) Evaluate(ctx context.Context) (bool, []Rule) {
 		defer trace.pop()
 	}
 
-	matchRules := []Rule{}
+	var matchRules []Rule
 
 	for _, evaluable := range n.Evaluables {
-		ok, rules := evaluable.Evaluate(ctx)
-		if ok {
+		if ok, rules := evaluable.Evaluate(ctx); ok {
 			matchRules = append(matchRules, rules...)
 		}
 	}
@@ -235,16 +234,16 @@ func (n *AllOfNode) PrepareConditions(ctx context.Context) error {
 // and the combined list of Rules gathered from all children. An empty AllOfNode
 // is considered successful.
 func (n *AllOfNode) Evaluate(ctx context.Context) (bool, []Rule) {
-	acc := []Rule{}
-
 	if len(n.Children) == 0 {
-		return true, acc // An empty AND condition is trivially true.
+		return true, nil // An empty AND condition is trivially true.
 	}
 
 	if trace := traceFromContext(ctx); trace != nil {
 		trace.push("allOfNode")
 		defer trace.pop()
 	}
+
+	var acc []Rule
 
 	for i := range n.Children {
 		ok, rules := n.Children[i].Evaluate(ctx)
@@ -288,11 +287,9 @@ func (n *AnyOfNode) PrepareConditions(ctx context.Context) error {
 // children. If no children evaluate to true, it returns false and nil rules.
 // An empty AnyOfNode is considered successful (or perhaps should be false, depending on desired logic - current impl returns true).
 func (n *AnyOfNode) Evaluate(ctx context.Context) (bool, []Rule) {
-	acc := []Rule{}
-
 	if len(n.Children) == 0 {
 		// Current implementation returns true, similar to AllOfNode.
-		return true, acc
+		return true, nil
 	}
 
 	if trace := traceFromContext(ctx); trace != nil {
@@ -303,6 +300,8 @@ func (n *AnyOfNode) Evaluate(ctx context.Context) (bool, []Rule) {
 		trace.push(nodeName)
 		defer trace.pop()
 	}
+
+	var acc []Rule
 
 	var anyOk bool
 

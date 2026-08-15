@@ -184,13 +184,18 @@ func (s *preparedStore) put(key any, value any) {
 	if s == nil {
 		return
 	}
+	if s.data == nil {
+		s.data = make(map[any]any)
+	}
 	s.data[key] = value
 }
 
 // withPreparedStore returns a context carrying a fresh preparedStore and the
-// store itself.
+// store itself. The internal map is allocated lazily on first write so that
+// evaluations of pure-only trees (no impure rules or conditions) never pay
+// for it.
 func withPreparedStore(ctx context.Context) (context.Context, *preparedStore) {
-	store := &preparedStore{data: make(map[any]any)}
+	store := &preparedStore{}
 	return context.WithValue(ctx, preparedStoreKey{}, store), store
 }
 

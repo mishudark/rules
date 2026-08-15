@@ -111,7 +111,10 @@ func run(ctx context.Context, targets []Target, hooks ProcessingHooks, name stri
 	// so metric-carrying rules can record their outcomes while they
 	// validate; the collector is a per-evaluation side channel, so no rule
 	// is mutated and rules stay safe to share across goroutines.
-	reports := make([]Report, len(targets))
+	var reports []Report
+	if collectMetrics {
+		reports = make([]Report, len(targets))
+	}
 	for i, target := range targets {
 		valCtx := target.ctx
 		var collector *outcomeCollector
