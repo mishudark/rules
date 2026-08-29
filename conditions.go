@@ -362,10 +362,10 @@ func FieldEquals(name string, fieldName string, expected any) Condition {
 // evaluation. In is the input data type from the DataRegistry, T is the
 // loaded data type.
 //
-// Prepare retrieves the loaded data and records it in the per-evaluation
-// preparedStore keyed by this condition; IsValid reads it back typed via
-// GetPreparedAs[T]. The condition keeps no state and is safe to share across
-// goroutines: a tree built with it can be reused across many targets.
+// Prepare retrieves the loaded data; the engine records it in the
+// per-evaluation preparedStore keyed by this condition; IsValid reads it back
+// typed via GetPreparedAs[T]. The condition keeps no state and is safe to share
+// across goroutines: a tree built with it can be reused across many targets.
 type TypedConditionWithPrepare[In any, T any] struct {
 	name      string
 	prepare   func(ctx context.Context, input In) (T, error)
@@ -374,9 +374,9 @@ type TypedConditionWithPrepare[In any, T any] struct {
 
 var _ Condition = (*TypedConditionWithPrepare[any, any])(nil)
 
-// Prepare retrieves typed input data from context, loads additional data, and
-// records it in the per-evaluation preparedStore keyed by this condition
-// instance.
+// Prepare retrieves typed input data from context and loads additional data.
+// The engine records the returned data in the per-evaluation preparedStore
+// keyed by this condition instance; IsValid reads it back typed.
 func (c *TypedConditionWithPrepare[In, T]) Prepare(ctx context.Context) (any, error) {
 	input, ok := GetAs[In](ctx)
 	if !ok {
@@ -389,19 +389,11 @@ func (c *TypedConditionWithPrepare[In, T]) Prepare(ctx context.Context) (any, er
 	}
 
 	if c.prepare == nil {
-		// No prepare step: record the zero value of T so IsValid can still
-		// read it back with GetPreparedAs[T].
 		var zero T
-		recordPrepared(ctx, c, zero)
 		return zero, nil
 	}
 
-	data, err := c.prepare(ctx, input)
-	if err != nil {
-		return nil, err
-	}
-	recordPrepared(ctx, c, data)
-	return data, nil
+	return c.prepare(ctx, input)
 }
 
 // Name returns the condition name.
@@ -454,6 +446,10 @@ func (c *TypedConditionWithPrepare[In, T]) IsPure() bool {
 //	        return perms.CanEdit
 //	    },
 //	)
+//
+// Note: a successful prepare returning untyped nil is treated as "not
+// prepared" (the condition then evaluates to false). If T is an interface
+// type, return a typed nil or a non-nil value instead.
 func NewTypedConditionWithPrepare[In any, T any](
 	name string,
 	prepare func(ctx context.Context, input In) (T, error),

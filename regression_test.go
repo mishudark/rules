@@ -214,9 +214,12 @@ func TestTypedRuleWithPrepare_NilPrepare_ValidateRuns(t *testing.T) {
 
 	ctx := WithRegistry(context.Background(), NewDataRegistry(regIn{Name: "alice"}))
 	ctx, _ = withPreparedStore(ctx)
-	_, err := rule.Prepare(ctx)
+	data, err := rule.Prepare(ctx)
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
+	}
+	if data != nil {
+		PutPrepared(ctx, rule, data)
 	}
 	if err := rule.Validate(ctx); err != nil {
 		t.Fatalf("Validate failed: %v", err)
