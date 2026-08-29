@@ -60,6 +60,7 @@ func (c *loggingCondition) Prepare(ctx context.Context) (any, error) {
 	c.log.add("prepareCondition:%s", c.name)
 	return nil, nil
 }
+
 func (c *loggingCondition) IsValid(ctx context.Context) bool {
 	c.log.add("isValid:%s", c.name)
 	return c.valid
@@ -76,6 +77,7 @@ func (r *loggingRule) Prepare(ctx context.Context) (any, error) {
 	r.log.add("prepareRule:%s", r.name)
 	return nil, nil
 }
+
 func (r *loggingRule) Validate(ctx context.Context) error {
 	r.log.add("validateRule:%s", r.name)
 	return nil

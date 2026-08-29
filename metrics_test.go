@@ -26,6 +26,7 @@ func (r *loggingMetricRule) Prepare(context.Context) (any, error) {
 	r.log.add("prepareRule:%s", r.name)
 	return nil, nil
 }
+
 func (r *loggingMetricRule) Validate(ctx context.Context) error {
 	r.log.add("validateRule:%s", r.name)
 	o := CounterValue(1)

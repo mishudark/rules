@@ -483,6 +483,15 @@ condition := rules.NewCondition("isAdult", func(ctx context.Context) bool {
 
 | Function | What it validates |
 |----------|-------------------|
+| `Required(name, value)` / `RequiredSlice[T](name, value)` | Presence (non-empty after trimming) |
+| `OneOf[T](name, value, allowed)` | Value is one of an allowed set (generic) |
+| `MatchesRegex(name, value, pattern)` | Arbitrary regex pattern |
+| `UUID(name, value)` | Canonical UUID format (any version) |
+| `EqualTo(name, value, expected)` | Confirmation fields (password repeat, ...) |
+| `Between[T](name, value, min, max)` | Numeric range (inclusive) |
+| `HexColor(name, value)` | Hex colors (#RGB, #RGBA, #RRGGBB, #RRGGBBAA) |
+| `Luhn(name, value)` | Payment card numbers (Luhn checksum) |
+| `PhoneE164(name, value)` | Phone numbers in E.164 format |
 | `MinValue(name, value, min)` / `MaxValue(name, value, max)` | Numeric bounds |
 | `Email(name, value, allowlist)` | Email addresses (RFC 5322) |
 | `URL(value, schemes)` | URLs with optional scheme allowlist |
@@ -490,6 +499,7 @@ condition := rules.NewCondition("isAdult", func(ctx context.Context) bool {
 | `MinLengthString(name, value, min)` / `MaxLengthString(name, value, max)` | String length (rune-aware) |
 | `MinLengthSlice[T](name, value, min)` / `MaxLengthSlice[T](name, value, max)` | Slice length (generic, any slice type) |
 | `Slug(name, value)` / `UnicodeSlug(name, value)` | ASCII and Unicode slugs |
+| `HexColor(name, value)` / `PhoneE164(name, value)` / `Luhn(name, value)` / `UUID(name, value)` | Common formats (colors, phones, cards, UUIDs) |
 | `IPv4Address(value)` / `IPv6Address(value)` / `IPv46Address(value)` | IP addresses |
 | `FileExtensionValidator(value, allowed)` | File extensions (case-insensitive) |
 | `DecimalValidator(value, maxDigits, decimalPlaces)` | Decimal numbers with precision |
@@ -677,6 +687,15 @@ if err != nil {
 | `MIN_LENGTH_STRING`, `MAX_LENGTH_STRING` | `MinLengthString`, `MaxLengthString` |
 | `MIN_LENGTH_SLICE`, `MAX_LENGTH_SLICE` | `MinLengthSlice`, `MaxLengthSlice` |
 | `INVALID_SLUG`, `INVALID_UNICODE_SLUG` | `Slug`, `UnicodeSlug` |
+| `REQUIRED` | `Required`, `RequiredSlice` |
+| `VALUE_NOT_ALLOWED` | `OneOf` |
+| `PATTERN_MISMATCH` | `MatchesRegex` |
+| `INVALID_UUID` | `UUID` |
+| `VALUE_MISMATCH` | `EqualTo` |
+| `VALUE_OUT_OF_RANGE` | `Between` |
+| `INVALID_HEX_COLOR` | `HexColor` |
+| `INVALID_CARD_NUMBER` | `Luhn` |
+| `INVALID_PHONE_FORMAT` | `PhoneE164` |
 | `INVALID_URL_FORMAT`, `URL_SCHEME_NOT_ALLOWED` | `URL` |
 | `INVALID_IPV4_ADDRESS`, `INVALID_IPV6_ADDRESS`, `INVALID_IP_ADDRESS` | `IPv4Address`, `IPv6Address`, `IPv46Address` |
 | `FILE_EXTENSION_NOT_ALLOWED` | `FileExtensionValidator` |
