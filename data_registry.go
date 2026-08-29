@@ -34,6 +34,21 @@ func Get(ctx context.Context) (any, bool) {
 	return reg.data, true
 }
 
+// GetAs returns the registry payload typed as T, with a runtime type
+// assertion. The boolean is false when the payload is not of type T.
+// It is the method form of the package-level [GetAs], usable when the
+// registry is already at hand:
+//
+//	user, ok := reg.GetAs[User]()
+func (r *DataRegistry) GetAs[T any]() (T, bool) {
+	var zero T
+	if r == nil {
+		return zero, false
+	}
+	typed, ok := r.data.(T)
+	return typed, ok
+}
+
 // GetAs retrieves typed data from context with runtime type assertion.
 // Returns the typed data and a boolean indicating if the type matches.
 //
@@ -44,13 +59,12 @@ func Get(ctx context.Context) (any, bool) {
 //	    // Use user with type safety
 //	}
 func GetAs[T any](ctx context.Context) (T, bool) {
-	var zero T
-	data, ok := Get(ctx)
+	reg, ok := ctx.Value(registryKey{}).(*DataRegistry)
 	if !ok {
+		var zero T
 		return zero, false
 	}
-	typed, ok := data.(T)
-	return typed, ok
+	return reg.GetAs[T]()
 }
 
 // WithRegistry returns a new context with the provided registry.
@@ -164,19 +178,28 @@ type preparedStoreKey struct{}
 // its own evaluation's store, never from the rule/condition struct.
 //
 // The store is read with [GetPreparedAs] (typed) or [GetPrepared], and written
-// with [PutPrepared]. Built-in typed rules and conditions self-record in their
-// Prepare; custom implementations may use [PutPrepared] the same way.
+// by whoever calls Prepare: the engine records the returned value keyed by the
+// rule or condition, so Prepare implementations never write the store
+// themselves. Custom code that drives a rule or condition outside the engine
+// should record the return value with [PutPrepared] the same way.
 type preparedStore struct {
 	data map[any]any
 }
 
-// get returns the prepared data for the given rule or condition.
-func (s *preparedStore) get(key any) (any, bool) {
+// get returns the prepared data for the given rule or condition, typed as T.
+// The boolean is false when the key has no recorded data or the recorded data
+// is not of type T.
+func (s *preparedStore) get[T any](key any) (T, bool) {
+	var zero T
 	if s == nil {
-		return nil, false
+		return zero, false
 	}
 	data, ok := s.data[key]
-	return data, ok
+	if !ok {
+		return zero, false
+	}
+	typed, ok := data.(T)
+	return typed, ok
 }
 
 // put stores the prepared data for the given rule or condition.
@@ -207,8 +230,8 @@ func preparedStoreFromContext(ctx context.Context) *preparedStore {
 
 // recordPrepared stores data keyed by key in the per-evaluation preparedStore.
 // It is a no-op when no store is attached to ctx (e.g. when a rule/condition is
-// exercised outside the engine). Built-in typed rules and conditions use this
-// in their Prepare so the same data is available to their Validate/IsValid.
+// exercised outside the engine). The engine calls this on every Prepare return
+// value so the same data is available to the callee's Validate/IsValid.
 func recordPrepared(ctx context.Context, key, data any) {
 	if store := preparedStoreFromContext(ctx); store != nil {
 		store.put(key, data)
@@ -216,10 +239,13 @@ func recordPrepared(ctx context.Context, key, data any) {
 }
 
 // PutPrepared records data keyed by key in the per-evaluation preparedStore.
-// Custom Rule or Condition implementations that fetch data in their Prepare
-// call this so they can read it back in Validate / IsValid with [GetPreparedAs]
-// (typed) or [GetPrepared] (untyped). It is a no-op when no store is attached
-// to ctx (which only happens outside the engine entry points).
+// Within the engine this happens automatically: whoever calls Prepare (the
+// driver, or a composite such as ChainRules/OrRules/NotCondition) records the
+// returned value keyed by the callee, so Prepare implementations never need to
+// write the store. Use PutPrepared only when driving a Rule or Condition by
+// hand outside the engine entry points — record what its Prepare returned so
+// Validate / IsValid can read it back with [GetPreparedAs] (typed) or
+// [GetPrepared] (untyped). It is a no-op when no store is attached to ctx.
 //
 // Use the rule or condition instance itself as the key so the data is scoped to
 // it and the same tree can be reused across goroutines without cross-talk.
@@ -235,7 +261,7 @@ func GetPrepared(ctx context.Context, key any) any {
 	if store == nil {
 		return nil
 	}
-	data, _ := store.get(key)
+	data, _ := store.get[any](key)
 	return data
 }
 
@@ -250,9 +276,7 @@ func GetPrepared(ctx context.Context, key any) any {
 // Example:
 //
 //	func (r *MyRule) Prepare(ctx context.Context) (any, error) {
-//	    perms, err := loadPermissions(ctx)
-//	    rules.PutPrepared(ctx, r, perms)
-//	    return perms, err
+//	    return loadPermissions(ctx) // the engine records this return value
 //	}
 //	func (r *MyRule) Validate(ctx context.Context) error {
 //	    perms, ok := rules.GetPreparedAs[Permissions](ctx, r)
@@ -262,15 +286,6 @@ func GetPrepared(ctx context.Context, key any) any {
 //	    return check(perms)
 //	}
 func GetPreparedAs[T any](ctx context.Context, key any) (T, bool) {
-	var zero T
 	store := preparedStoreFromContext(ctx)
-	if store == nil {
-		return zero, false
-	}
-	data, ok := store.get(key)
-	if !ok {
-		return zero, false
-	}
-	typed, ok := data.(T)
-	return typed, ok
+	return store.get[T](key)
 }

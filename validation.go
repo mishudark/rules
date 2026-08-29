@@ -92,7 +92,13 @@ func run(ctx context.Context, targets []Target, hooks ProcessingHooks, name stri
 	prepared := make([][]Rule, len(targets))
 	for i, target := range targets {
 		for _, rule := range evaluated[i] {
-			if _, err := rule.Prepare(target.ctx); err != nil {
+			// The engine records whatever the rule fetched, keyed by the
+			// rule instance, so Validate can read it back typed.
+			data, err := rule.Prepare(target.ctx)
+			if data != nil {
+				recordPrepared(target.ctx, rule, data)
+			}
+			if err != nil {
 				targetErrs[i] = append(targetErrs[i], err)
 				continue
 			}

@@ -177,6 +177,7 @@ err := Validate(ctx, tree, hooks, "name")
 // Access data in rules/conditions
 data, ok := Get(ctx)
 user, ok := GetAs[User](ctx)  // Type-safe access
+user, ok = reg.GetAs[User]()  // Method form when the registry is at hand
 ```
 
 ### Directory Structure
@@ -267,14 +268,15 @@ Use `NewCondition()` for pure conditions, `NewConditionSideEffect[T]()` or `NewT
 
 ### 6.3 Reuse and Concurrency ✅
 **All rules and conditions are stateless and safe to share across goroutines.**
-`Prepare(ctx) (any, error)` retrieves the data and records it in a per-evaluation
-`PreparedStore` (created by `Validate`/`ValidateMulti`/`EvaluateMetrics*`, once
+`Prepare(ctx) (any, error)` retrieves the data; whoever calls `Prepare` records
+it in a per-evaluation `PreparedStore` (created by
+`Validate`/`ValidateMulti`/`EvaluateMetrics*`, once
 per target in multi-target runs), keyed by the rule or condition instance. The
 rule or condition reads that data back **typed** in `Validate(ctx)` /
 `IsValid(ctx)` via the generic accessor `GetPreparedAs[T](ctx, r)` (or untyped
-via `GetPrepared`); built-in typed rules and conditions self-record during
-`Prepare` (see `TypedRuleDataFunc`, `TypedConditionWithPrepare`,
-`TypedMetricRuleDataFunc`, `ConditionSideEffect[T]`).
+via `GetPrepared`); the engine (and composites such as `ChainRules`, `OrRules`,
+`NotCondition`) records every `Prepare` return value, so neither built-in nor
+custom `Prepare` implementations ever write the store themselves.
 Because prepared data travels in the context — never on the rule or condition
 — a tree built once can be validated concurrently against many targets:
 
@@ -330,8 +332,8 @@ is essential — many "obvious" optimizations actually break the design.
    calling `Condition.Prepare(ctx)` on each condition. For impure
    conditions, `Prepare()` is where data loading happens (DB, API,
    dataloader calls). For pure conditions it is a no-op. `Prepare` returns
-   the retrieved data `(any, error)`; typed conditions self-record it in
-   the evaluation's `PreparedStore` (keyed by themselves) so `IsValid`
+   the retrieved data `(any, error)`; the engine records it in
+   the evaluation's `PreparedStore` (keyed by the condition) so `IsValid`
    can read it back typed via `GetPreparedAs[T]` (see §6.3).
 
 **Phase B — Evaluate (select + run rules):**

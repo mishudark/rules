@@ -412,9 +412,12 @@ func TestNewTypedRuleWithPrepare(t *testing.T) {
 	ctx := WithRegistry(context.Background(), NewDataRegistry(user))
 	ctx, _ = withPreparedStore(ctx)
 
-	_, err := rule.Prepare(ctx)
+	data, err := rule.Prepare(ctx)
 	if err != nil {
 		t.Errorf("unexpected prepare error: %v", err)
+	}
+	if data != nil {
+		PutPrepared(ctx, rule, data)
 	}
 	if !prepareCalled {
 		t.Error("prepare should have been called")
@@ -450,8 +453,10 @@ func TestNewTypedRuleWithPrepare(t *testing.T) {
 	ctx = WithRegistry(context.Background(), NewDataRegistry(user3))
 	ctx, _ = withPreparedStore(ctx)
 
-	if _, err := rule.Prepare(ctx); err != nil {
+	if data, err := rule.Prepare(ctx); err != nil {
 		t.Errorf("unexpected prepare error: %v", err)
+	} else if data != nil {
+		PutPrepared(ctx, rule, data)
 	}
 
 	err = rule.Validate(ctx)
@@ -474,8 +479,10 @@ func TestNewTypedRuleWithPrepare(t *testing.T) {
 
 	ctx = WithRegistry(context.Background(), NewDataRegistry(user))
 	ctx, _ = withPreparedStore(ctx)
-	if _, err := ruleNoValidate.Prepare(ctx); err != nil {
+	if data, err := ruleNoValidate.Prepare(ctx); err != nil {
 		t.Error("unexpected error for type mismatch in prepare")
+	} else if data != nil {
+		PutPrepared(ctx, ruleNoValidate, data)
 	}
 
 	err = ruleNoValidate.Validate(ctx)

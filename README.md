@@ -12,14 +12,14 @@ applicable rules, and runs them against your data.
 
 The result is validation you can build once and reuse across many data
 instances, batch across thousands of targets, and even share safely across
-goroutines — without giving up type safety or performance.
+goroutines, without giving up type safety or performance.
 
-- **Composable** — Build small pieces, compose them into complex trees.
-- **Reusable** — Build trees once, validate many different data instances.
-- **Type-safe** — Generics give you compile-time safety in rules and conditions.
-- **Performant** — Roughly 500–1000 ns per full tree evaluation, zero allocations for type checks.
-- **Concurrency-safe** — All rules and conditions are stateless; a single tree can be shared across goroutines.
-- **Dataloader-friendly** — A two-phase prepare/evaluate design lets fetches fan out into one batched round-trip.
+- **Composable**: Build small pieces, compose them into complex trees.
+- **Reusable**: Build trees once, validate many different data instances.
+- **Type-safe**: Generics give you compile-time safety in rules and conditions.
+- **Performant**: Roughly 500–1000 ns per full tree evaluation, zero allocations for type checks.
+- **Concurrency-safe**: All rules and conditions are stateless; a single tree can be shared across goroutines.
+- **Dataloader-friendly**: A two-phase prepare/evaluate design lets fetches fan out into one batched round-trip.
 
 ## Table of contents
 
@@ -46,12 +46,12 @@ goroutines — without giving up type safety or performance.
 
 ## When to use it
 
-- **Feature flags** — enable features based on user attributes.
-- **A/B testing** — route users to different experiences.
-- **Form validation** — validate complex forms with conditions.
-- **Business rules** — implement decision trees that non-developers can visualize.
-- **Reusable validation** — build rule trees once, validate against different data.
-- **Key metric indicators (KMIs)** — counters, histograms, and scores computed in the same tree as validation.
+- **Feature flags**: enable features based on user attributes.
+- **A/B testing**: route users to different experiences.
+- **Form validation**: validate complex forms with conditions.
+- **Business rules**: implement decision trees that non-developers can visualize.
+- **Reusable validation**: build rule trees once, validate against different data.
+- **Key metric indicators (KMIs)**: counters, histograms, and scores computed in the same tree as validation.
 
 ## Installation
 
@@ -94,9 +94,9 @@ A validation tree is made of three kinds of components:
 
 | Component | Role | Interface |
 |-----------|------|-----------|
-| **Rule** | A single validation unit. Produces an `error` (or `nil`). | `Rule` — `Prepare`, `Validate`, `Name` |
-| **Condition** | A boolean gate that controls whether child rules run. | `Condition` — `Prepare`, `IsValid`, `Name`, `IsPure` |
-| **Evaluable** | Any tree component that can be evaluated: nodes, branches, and leaves. | `Evaluable` — `PrepareConditions`, `Evaluate` |
+| **Rule** | A single validation unit. Produces an `error` (or `nil`). | `Rule`: `Prepare`, `Validate`, `Name` |
+| **Condition** | A boolean gate that controls whether child rules run. | `Condition`: `Prepare`, `IsValid`, `Name`, `IsPure` |
+| **Evaluable** | Any tree component that can be evaluated: nodes, branches, and leaves. | `Evaluable`: `PrepareConditions`, `Evaluate` |
 
 The distinction matters:
 
@@ -189,14 +189,14 @@ PrepareConditions → Evaluate → Prepare → Validate
 
 | Step | What happens |
 |------|--------------|
-| **PrepareConditions** | Walk the whole tree top-down, calling `Condition.Prepare(ctx)` on every condition. Impure conditions (with side effects) fetch data here — from a database, an API, or a dataloader. Pure conditions skip this. |
+| **PrepareConditions** | Walk the whole tree top-down, calling `Condition.Prepare(ctx)` on every condition. Impure conditions (with side effects) fetch data here (a database, an API, or a dataloader). Pure conditions skip this. |
 | **Evaluate** | Re-walk the tree, calling `Condition.IsValid(ctx)` on each condition to select which branches contribute rules. Returns the candidate `[]Rule`. |
 | **Prepare** | Call `Rule.Prepare(ctx)` on every candidate rule. Typed rules fetch any data they need and record it. |
 | **Validate** | Call `Rule.Validate(ctx)` on every prepared rule. Rules read their prepared data back typed via `GetPreparedAs[T]`, and errors are collected. |
 
 The steps never interleave: **every** condition is prepared before any rule is
 prepared, and **every** rule is prepared before any validation runs.
-`ValidateMulti` extends this ordering across targets — all targets' conditions
+`ValidateMulti` extends this ordering across targets: all targets' conditions
 are prepared before any evaluation, and all targets' rules before any
 validation.
 
@@ -209,7 +209,7 @@ themselves. `Validate` and `IsValid` read it back typed via
 data, ok := rules.GetPreparedAs[Permissions](ctx, r) // typed read
 ```
 
-Because prepared data travels in the context — never on the rule or condition —
+Because prepared data travels in the context (never on the rule or condition),
 rules and conditions stay stateless and safe to share across goroutines.
 
 ### Dataloader-friendly by design
@@ -219,7 +219,7 @@ This ordering exists so `Prepare` implementations can fan out fetches through a
 a single round-trip per phase instead of one per node:
 
 - **Impure `Node` conditions**: children are prepared even when the condition
-  turns out false — short-circuiting would serialize fetches across branches
+  turns out false; short-circuiting would serialize fetches across branches
   (N+1).
 - **Impure `Either` conditions**: both branches are prepared, for the same
   reason.
@@ -227,7 +227,7 @@ a single round-trip per phase instead of one per node:
   pure-false condition prunes its whole subtree (safe, because pure means no
   fetches to lose).
 - **Composite rules** (`Or`, `ChainRules`): `Prepare` runs on all children
-  regardless of their short-circuit `Validate` semantics — preparation is setup
+  regardless of their short-circuit `Validate` semantics: preparation is setup
   work.
 
 ```go
@@ -245,7 +245,7 @@ rule := rules.NewTypedRuleWithPrepare(
 )
 ```
 
-**Hooks.** `ProcessingHooks` lets you inject code at each step boundary — a
+**Hooks.** `ProcessingHooks` lets you inject code at each step boundary, a
 natural place to flush a dataloader:
 
 ```go
@@ -348,7 +348,7 @@ tree := rules.Either(
 )
 ```
 
-### AllOf (AND) / AnyOf (OR) — logical composition
+### AllOf (AND) / AnyOf (OR): logical composition
 
 ```go
 // All must pass
@@ -445,7 +445,7 @@ func ProductRules() rules.Evaluable {
     )
 }
 
-// main.go — merge and use
+// main.go: merge and use
 mergedTree := rules.Root(
     userrules.UserRules(),
     productrules.ProductRules(),
@@ -514,7 +514,7 @@ empty `Field`. Validators with `name` fill the `Field` field in `rules.Error`
 for structured error reporting.
 
 **Empty values are valid by convention.** All validators (for example `Email`
-and `URL`) treat an empty string as valid — they check *format*, not
+and `URL`) treat an empty string as valid; they check *format*, not
 *presence*. If a field is required, add a separate presence check.
 
 ## Full example: user registration
@@ -582,8 +582,8 @@ func main() {
 ## Key metric indicators (KMIs)
 
 The same tree engine also computes key metric indicators dynamically. Instead
-of only returning pass/fail, a rule can **carry metric outcomes** — counters,
-histograms, scores, or valid/invalid observations — alongside its validation
+of only returning pass/fail, a rule can **carry metric outcomes** (counters,
+histograms, scores, or valid/invalid observations) alongside its validation
 result. Use `EvaluateMetrics` (or `EvaluateMetricsMulti` for batches) instead
 of `Validate`:
 
@@ -628,7 +628,7 @@ reports its observation (for example, counting attempts), and the error is
 surfaced in `report.Errors`.
 
 **Extending any rule.** Any `Rule` can carry metrics by calling `rules.Emit`
-from its `Validate` method — no dedicated constructor needed:
+from its `Validate` method, no dedicated constructor needed:
 
 ```go
 rule := rules.NewTypedRule[User]("itemsInOrder", func(ctx context.Context, u User) error {
@@ -638,8 +638,8 @@ rule := rules.NewTypedRule[User]("itemsInOrder", func(ctx context.Context, u Use
 ```
 
 **Aggregation.** Same-name outcomes are combined when the report is built.
-Defaults are kind-specific — counters sum, histograms merge bucket-wise,
-scores weight-average — and can be overridden via the `Aggregation` field on
+Defaults are kind-specific (counters sum, histograms merge bucket-wise,
+scores weight-average) and can be overridden via the `Aggregation` field on
 `Outcome`.
 
 **Batching.** The `Prepare` step of `NewTypedMetricRuleWithPrepare` runs in the
@@ -729,7 +729,7 @@ tree)` and pass the resulting slice to `ValidateMulti`.
 ## Execution path tracing
 
 For debugging and logging, record the path each rule took through the tree.
-Tracing is opt-in and race-free — rules are never mutated during evaluation:
+Tracing is opt-in and race-free: rules are never mutated during evaluation:
 
 ```go
 ctx, trace := rules.WithExecutionTrace(ctx)
@@ -742,17 +742,17 @@ fmt.Println(trace.Path(rule))
 ## Concurrency and reuse
 
 **All rules and conditions are stateless and safe to share across
-goroutines.** `Prepare(ctx)` retrieves data and records it in a per-evaluation
-prepared store (created once per validation run), keyed by the rule or
-condition instance. The rule or condition reads that data back typed in
+goroutines.** `Prepare(ctx)` retrieves data; the engine records it in a
+per-evaluation prepared store (created once per validation run), keyed by the
+rule or condition instance. The rule or condition reads that data back typed in
 `Validate` / `IsValid` via `GetPreparedAs[T]`. Because prepared data travels in
-the context — never on the rule or condition — a tree built once (including
+the context (never on the rule or condition), a tree built once (including
 trees built with `NewTypedRuleWithPrepare`, `NewTypedMetricRuleWithPrepare`,
 and `NewTypedConditionWithPrepare`) can be validated concurrently against many
 targets:
 
 ```go
-// One tree, many targets, concurrent validation — safe
+// One tree, many targets, concurrent validation, safe
 tree := buildTree()
 for _, user := range users {
     go func(u User) {
@@ -762,8 +762,8 @@ for _, user := range users {
 ```
 
 The one caveat: do not share a single **context** (which carries the registry
-and the per-evaluation store) across goroutines. Create one context per target
-— `ValidateWithData`, `ValidateMultiWithData`, `EvaluateMetricsWithData`, and
+and the per-evaluation store) across goroutines. Create one context per target;
+`ValidateWithData`, `ValidateMultiWithData`, `EvaluateMetricsWithData`, and
 friends do this for you.
 
 ## Performance
@@ -778,12 +778,12 @@ friends do this for you.
 
 For high-throughput scenarios (thousands of evaluations per second):
 
-1. **Type checks are cheap** — `IsA[T]()` caches the target type; reflection
+1. **Type checks are cheap**: `IsA[T]()` caches the target type; reflection
    overhead is negligible (~7 ns).
-2. **Use `ValidateMultiWithData`** — batch validations to amortize
+2. **Use `ValidateMultiWithData`**: batch validations to amortize
    context-creation cost.
-3. **Avoid deep nesting** — each level adds overhead; flatten where possible.
-4. **Cache trees globally** — because every rule and condition is stateless,
+3. **Avoid deep nesting**: each level adds overhead; flatten where possible.
+4. **Cache trees globally**: because every rule and condition is stateless,
    any tree can be built once and reused (even concurrently) across requests.
 
 See [PERFORMANCE.md](PERFORMANCE.md) for detailed benchmarks and optimization
@@ -816,12 +816,12 @@ condition := rules.FastTypeSwitch("isValid", func(data any) bool {
 
 | Function | Returns | What it does |
 |----------|---------|--------------|
-| `rules.Root(children...)` | `Evaluable` | Top-level container (AnyOf) — passes if **any** child passes |
+| `rules.Root(children...)` | `Evaluable` | Top-level container (AnyOf): passes if **any** child passes |
 | `rules.Node(condition, children...)` | `Evaluable` | Runs children **only if** condition is true |
 | `rules.Either(condition, left, right)` | `Evaluable` | If-else: left if true, right if false |
-| `rules.Rules(rules...)` | `Evaluable` | Leaf node — **all** rules must pass |
-| `rules.AllOf(children...)` | `Evaluable` | Logical AND — **all** children must succeed |
-| `rules.AnyOf(children...)` | `Evaluable` | Logical OR — **at least one** child must succeed |
+| `rules.Rules(rules...)` | `Evaluable` | Leaf node: **all** rules must pass |
+| `rules.AllOf(children...)` | `Evaluable` | Logical AND: **all** children must succeed |
+| `rules.AnyOf(children...)` | `Evaluable` | Logical OR: **at least one** child must succeed |
 | `rules.Not(condition)` | `Condition` | Negate a condition |
 | `rules.Or(rule, rules...)` | `Rule` | Rule-level OR (use inside `Rules()`) |
 | `rules.NewChainRules(rules...)` | `Rule` | Sequential rules (stop on first error, use inside `Rules()`) |
@@ -1018,38 +1018,38 @@ tree := rules.Node(
 
 The `IsPure()` method controls optimization:
 
-- `true` — no side effects, the engine may skip `Prepare()`.
-- `false` — has side effects, `Prepare()` is always called before `IsValid()`.
+- `true`: no side effects, the engine may skip `Prepare()`.
+- `false`: has side effects, `Prepare()` is always called before `IsValid()`.
 
 ## Best practices
 
-1. **Use the data registry pattern for reusable trees** — build once with
+1. **Use the data registry pattern for reusable trees**: build once with
    `NewTypedRule` and `NewTypedCondition`, reuse with `ValidateWithData`.
 
-2. **Use closures for one-off validations** — for simple, single-use
+2. **Use closures for one-off validations**: for simple, single-use
    validations, `NewRulePure` and `NewConditionPure` are fine.
 
-3. **Use `FastIsA[T]` for type switching** — merging trees from different
+3. **Use `FastIsA[T]` for type switching**: merging trees from different
    packages? Use `FastIsA[YourType]("isYourType")`.
 
-4. **Prefer type-safe rules** — `NewTypedRule[T]` gives compile-time type
+4. **Prefer type-safe rules**: `NewTypedRule[T]` gives compile-time type
    safety within the rule function.
 
-5. **Use `ChainRules` for sequential checks** — when rules must run in order
+5. **Use `ChainRules` for sequential checks**: when rules must run in order
    (stop on first error), use `NewChainRules` instead of manual chaining.
 
-6. **Know the difference: `Or` vs `AnyOf`** — `Or(rule, ...)` creates a `Rule`
+6. **Know the difference: `Or` vs `AnyOf`**: `Or(rule, ...)` creates a `Rule`
    (use inside `Rules()`), while `AnyOf(children...)` creates an `Evaluable`
    (use as a tree node).
 
-7. **Share trees freely, even across goroutines** — rules and conditions hold
+7. **Share trees freely, even across goroutines**: rules and conditions hold
    no mutable state: `Prepare` records its retrieved data in the
    per-evaluation prepared store (keyed by the rule or condition instance), and
    `Validate` / `IsValid` read it back typed via `GetPreparedAs[T]`. Cache
    trees globally.
 
-8. **Inject, don't store** — `Prepare(ctx) (any, error)` retrieves the data and
-   records it in the per-evaluation prepared store; `Validate(ctx)` /
+8. **Inject, don't store**: `Prepare(ctx) (any, error)` returns the data and
+   the engine records it in the per-evaluation prepared store; `Validate(ctx)` /
    `IsValid(ctx)` read it back typed via `GetPreparedAs[T](ctx, r)`. Never
    cache prepared data on the rule or condition: that is what made trees unsafe
    to share, and it defeats the dataloader fan-out (a dataloader batches every
@@ -1058,7 +1058,7 @@ The `IsPure()` method controls optimization:
 
 ## Learn more
 
-- [PERFORMANCE.md](PERFORMANCE.md) — detailed benchmarks and optimization strategies.
-- [AGENTS.md](AGENTS.md) — architecture notes for contributors, including the
+- [PERFORMANCE.md](PERFORMANCE.md): detailed benchmarks and optimization strategies.
+- [AGENTS.md](AGENTS.md): architecture notes for contributors, including the
   two-phase prepare/evaluate design and the dataloader batching invariant.
-- [pkg.go.dev](https://pkg.go.dev/github.com/mishudark/rules) — full package documentation.
+- [pkg.go.dev](https://pkg.go.dev/github.com/mishudark/rules): full package documentation.

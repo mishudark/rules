@@ -39,21 +39,22 @@ const (
 // used within conditional nodes (like ConditionNode) to determine whether
 // associated rules or child nodes should be processed.
 //
-// Prepare returns the retrieved data (any) and an error; the implementation
-// records that data itself in the per-evaluation preparedStore (see
-// [PutPrepared]) so it can be read back typed in IsValid via [GetPreparedAs].
+// Prepare returns the retrieved data (any) and an error; the caller of Prepare
+// (the engine, or a composite such as NotCondition) records that data in the
+// per-evaluation preparedStore keyed by the condition, so it can be read back
+// typed in IsValid via [GetPreparedAs].
 // Because the prepared data travels in the context — never on the condition —
 // a single tree can be reused and shared across goroutines.
 type Condition interface {
 	// Prepare is executed before the main validation logic. It can be used to
 	// retrieve information. It returns the retrieved data (any) and an error;
-	// for typed conditions the same data is recorded in the preparedStore so
-	// IsValid can read it back via [GetPreparedAs].
+	// the caller records the returned data in the preparedStore so IsValid can
+	// read it back via [GetPreparedAs].
 	Prepare(ctx context.Context) (any, error)
 	// Name is a method to retrieve the name of the condition for debugging or logging.
 	Name() string
 	// Evaluate returns true if the condition is met, otherwise false. Typed
-	// conditions read back the data Prepare recorded via [GetPreparedAs]; pure
+	// conditions read back the data returned by Prepare via [GetPreparedAs]; pure
 	// conditions may ignore it.
 	IsValid(ctx context.Context) bool
 	// IsPure returns true if the condition is pure (no side effects).
@@ -64,21 +65,22 @@ type Condition interface {
 // step (potentially for setup or pre-checks) and a Validate step that performs
 // the actual validation check.
 //
-// Prepare returns the retrieved data (any) plus an error; the implementation
-// records that data in the per-evaluation preparedStore (see [PutPrepared]) so
-// it can be read back typed in Validate via [GetPreparedAs]. Rules never store
+// Prepare returns the retrieved data (any) plus an error; the caller of
+// Prepare (the engine, or a composite such as ChainRules/OrRules) records that
+// data in the per-evaluation preparedStore keyed by the rule, so it can be read
+// back typed in Validate via [GetPreparedAs]. Rules never store
 // prepared state on themselves, so a single tree can be reused and shared
 // across goroutines.
 type Rule interface {
 	// Name returns the name of the rule for identification.
 	Name() string
 	// Prepare allows for initialization or pre-checks before the main validation.
-	// It returns the retrieved data and an error if preparation fails. Typed
-	// rules record the same data in the preparedStore so Validate can read it
+	// It returns the retrieved data and an error if preparation fails. The caller
+	// records the returned data in the preparedStore so Validate can read it
 	// back via [GetPreparedAs].
 	Prepare(ctx context.Context) (any, error)
 	// Validate performs the core validation logic. Typed rules read back the
-	// data Prepare recorded via [GetPreparedAs] (typed); pure rules may ignore
+	// data returned by Prepare via [GetPreparedAs] (typed); pure rules may ignore
 	// it. Returns an error if validation fails, otherwise nil.
 	Validate(ctx context.Context) error
 }
@@ -167,7 +169,14 @@ func (n *ConditionNode) PrepareConditions(ctx context.Context) error {
 		return nil
 	}
 
-	if _, err := n.Condition.Prepare(ctx); err != nil {
+	// Record whatever the condition fetched so IsValid can read it back
+	// typed (the engine records the return value, keyed by the condition).
+	data, err := n.Condition.Prepare(ctx)
+	if data != nil {
+		recordPrepared(ctx, n.Condition, data)
+	}
+
+	if err != nil {
 		return err
 	}
 
@@ -375,7 +384,13 @@ func (n *NotCondition) Prepare(ctx context.Context) (any, error) {
 	if n.condition == nil {
 		return nil, nil
 	}
-	return n.condition.Prepare(ctx)
+	// Record the inner condition's return value under its own key, so its
+	// IsValid can read the data back typed.
+	data, err := n.condition.Prepare(ctx)
+	if data != nil {
+		recordPrepared(ctx, n.condition, data)
+	}
+	return data, err
 }
 
 func (n *NotCondition) IsValid(ctx context.Context) bool {
@@ -450,9 +465,14 @@ func (n *ConditionEither) PrepareConditions(ctx context.Context) error {
 	}
 
 	// Impure: prepare the condition, then fan out Prepare across BOTH
-	// branches so the dataloader can batch all fetches together. The typed
-	// condition self-records its prepared data, so the store is populated here.
-	if _, err := n.Condition.Prepare(ctx); err != nil {
+	// branches so the dataloader can batch all fetches together. The engine
+	// records the returned data keyed by the condition so IsValid can read
+	// it back typed.
+	data, err := n.Condition.Prepare(ctx)
+	if data != nil {
+		recordPrepared(ctx, n.Condition, data)
+	}
+	if err != nil {
 		return err
 	}
 
@@ -568,13 +588,17 @@ func (c *ChainRules) Name() string {
 }
 
 // Prepare implements the Rule interface for ChainRules. It calls Prepare() on each
-// Rule in the sequence. If any child Rule's Prepare() returns an error,
+// Rule in the sequence, recording each child's returned data in the preparedStore
+// keyed by that child. If any child Rule's Prepare() returns an error,
 // this method stops and returns that error immediately. If all children's
-// Prepare() methods succeed, it returns nil. Each child prepares and records
-// its own data (typed rules self-record into the preparedStore).
+// Prepare() methods succeed, it returns nil.
 func (c *ChainRules) Prepare(ctx context.Context) (any, error) {
 	for _, rule := range c.Rules {
-		if _, err := rule.Prepare(ctx); err != nil {
+		data, err := rule.Prepare(ctx)
+		if data != nil {
+			recordPrepared(ctx, rule, data)
+		}
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -666,13 +690,17 @@ func (o *OrRules) Name() string {
 }
 
 // Prepare implements the Rule interface for OrRules. It calls Prepare() on
-// every child Rule: preparation is setup work, so all rules must be prepared
-// regardless of the OR semantics used by Validate. Each child records its own
-// retrieved data into the evaluation's preparedStore. If any child Rule's
+// every child Rule — preparation is setup work, so all rules must be prepared
+// regardless of the OR semantics used by Validate — recording each child's
+// returned data in the preparedStore keyed by that child. If any child Rule's
 // Prepare() returns an error, it stops and returns that error immediately.
 func (o *OrRules) Prepare(ctx context.Context) (any, error) {
 	for _, rule := range o.Rules {
-		if _, err := rule.Prepare(ctx); err != nil {
+		data, err := rule.Prepare(ctx)
+		if data != nil {
+			recordPrepared(ctx, rule, data)
+		}
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -756,20 +784,15 @@ type ConditionSideEffect[T any] struct {
 
 var _ Condition = (*ConditionSideEffect[any])(nil) // Ensure ConditionSideEffect implements the Condition interface.
 
-// Prepare runs the side-effecting prepare function, records the retrieved data
-// in the per-evaluation preparedStore keyed by this condition, and returns it
-// (as any) to satisfy the Rule interface. The data is read back typed in
-// IsValid via GetPreparedAs[T].
+// Prepare runs the side-effecting prepare function and returns the retrieved
+// data (as any) to satisfy the Rule interface. The engine records the return
+// value in the per-evaluation preparedStore keyed by this condition; IsValid
+// reads it back typed via GetPreparedAs[T].
 func (c *ConditionSideEffect[T]) Prepare(ctx context.Context) (any, error) {
 	if c.prepare == nil {
 		return nil, nil
 	}
-	data, err := c.prepare(ctx)
-	if err != nil {
-		return nil, err
-	}
-	recordPrepared(ctx, c, data)
-	return data, nil
+	return c.prepare(ctx)
 }
 
 func (c *ConditionSideEffect[T]) Name() string {
@@ -795,10 +818,14 @@ func (c *ConditionSideEffect[T]) IsPure() bool {
 // returns a value of type T; the condition function receives it typed, so
 // neither side touches `any`.
 //
-// Prepare returns the retrieved data and records it in the per-evaluation
-// preparedStore keyed by this condition; IsValid reads it back typed. The
-// condition keeps no state, so a tree built with it can be reused and shared
-// across goroutines.
+// Prepare returns the retrieved data; the engine records it in the
+// per-evaluation preparedStore keyed by this condition; IsValid reads it back
+// typed. The condition keeps no state, so a tree built with it can be reused
+// and shared across goroutines.
+//
+// Note: a successful prepare returning untyped nil is treated as "not
+// prepared" (the condition then evaluates to false). If T is an interface
+// type, return a typed nil or a non-nil value instead.
 //
 // Example:
 //
@@ -935,9 +962,9 @@ func (r *TypedRuleDataFunc[In, T]) Name() string {
 	return r.name
 }
 
-// Prepare reads the typed input from the data registry, runs the prepare
-// function, and records the retrieved data in the per-evaluation preparedStore
-// keyed by this rule. The rule keeps no state.
+// Prepare reads the typed input from the data registry and runs the prepare
+// function. The engine records the returned data in the per-evaluation
+// preparedStore keyed by this rule; the rule keeps no state.
 func (r *TypedRuleDataFunc[In, T]) Prepare(ctx context.Context) (any, error) {
 	input, ok := GetAs[In](ctx)
 	if !ok {
@@ -950,19 +977,11 @@ func (r *TypedRuleDataFunc[In, T]) Prepare(ctx context.Context) (any, error) {
 	}
 
 	if r.prepare == nil {
-		// No prepare step: record the zero value of T so Validate can still
-		// read it back with GetPreparedAs[T].
 		var zero T
-		recordPrepared(ctx, r, zero)
 		return zero, nil
 	}
 
-	data, err := r.prepare(ctx, input)
-	if err != nil {
-		return nil, err
-	}
-	recordPrepared(ctx, r, data)
-	return data, nil
+	return r.prepare(ctx, input)
 }
 
 // Validate reads the typed input from the data registry and the prepared data
@@ -996,10 +1015,14 @@ func (r *TypedRuleDataFunc[In, T]) Validate(ctx context.Context) error {
 // before validation (e.g., checking a database, calling an API).
 //
 // In is the input type read from the data registry; T is the loaded data type.
-// Prepare returns the retrieved data and records it in the per-evaluation
-// preparedStore keyed by this rule; the validate function reads it back typed
-// (via GetPreparedAs[T]) as its third argument. The rule keeps no state, so a
-// tree built with it can be reused and shared across goroutines.
+// Prepare returns the retrieved data; the engine records it in the
+// per-evaluation preparedStore keyed by this rule; the validate function reads
+// it back typed (via GetPreparedAs[T]) as its third argument. The rule keeps no
+// state, so a tree built with it can be reused and shared across goroutines.
+//
+// Note: a successful prepare returning untyped nil is treated as "not
+// prepared" (the validate function then receives the DATA_NOT_PREPARED error).
+// If T is an interface type, return a typed nil or a non-nil value instead.
 //
 // Example:
 //

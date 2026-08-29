@@ -329,9 +329,9 @@ var _ Rule = (*TypedMetricRuleDataFunc[any, any])(nil)
 // Name returns the rule name.
 func (r *TypedMetricRuleDataFunc[In, T]) Name() string { return r.name }
 
-// Prepare reads the typed input from the data registry, runs the prepare
-// function, and records the retrieved data in the per-evaluation preparedStore
-// keyed by this rule. The rule keeps no state.
+// Prepare reads the typed input from the data registry and runs the prepare
+// function. The engine records the returned data in the per-evaluation
+// preparedStore keyed by this rule; the rule keeps no state.
 func (r *TypedMetricRuleDataFunc[In, T]) Prepare(ctx context.Context) (any, error) {
 	input, ok := GetAs[In](ctx)
 	if !ok {
@@ -345,16 +345,10 @@ func (r *TypedMetricRuleDataFunc[In, T]) Prepare(ctx context.Context) (any, erro
 
 	if r.prepare == nil {
 		var zero T
-		recordPrepared(ctx, r, zero)
 		return zero, nil
 	}
 
-	data, err := r.prepare(ctx, input)
-	if err != nil {
-		return nil, err
-	}
-	recordPrepared(ctx, r, data)
-	return data, nil
+	return r.prepare(ctx, input)
 }
 
 // Validate reads the typed input from the data registry and the prepared data
@@ -391,10 +385,14 @@ func (r *TypedMetricRuleDataFunc[In, T]) Validate(ctx context.Context) error {
 // database), and it participates in the same dataloader batching as rules and
 // conditions.
 //
-// Prepare records the retrieved data in the per-evaluation preparedStore
-// keyed by this rule; Validate reads it back typed via GetPreparedAs[T]. The
-// rule keeps no state, so a tree built with it can be reused and shared across
-// goroutines.
+// Prepare returns the retrieved data; the engine records it in the
+// per-evaluation preparedStore keyed by this rule; Validate reads it back
+// typed via GetPreparedAs[T]. The rule keeps no state, so a tree built with it
+// can be reused and shared across goroutines.
+//
+// Note: a successful prepare returning untyped nil is treated as "not
+// prepared" (the fn then receives the DATA_NOT_PREPARED error). If T is an
+// interface type, return a typed nil or a non-nil value instead.
 //
 // Example:
 //
