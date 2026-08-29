@@ -379,6 +379,7 @@ func (m *mockPrepareRule) Prepare(context.Context) (any, error) {
 	m.prepares++
 	return nil, m.err
 }
+
 func (m *mockPrepareRule) Validate(context.Context) error {
 	return nil
 }
